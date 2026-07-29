@@ -5,6 +5,7 @@ import { buildStandings, currentEventId, eventPhase } from "./scoring.js";
 import { renderHeaderStats, renderPodium, renderStandings, renderPlayers,
          renderPhase, setEventTitle, setSyncLine, showDemoBanner, markSynced,
          renderPerms, setOpenClan, onPinToggle, onCompareToggle,
+         onCompareScreenshot,
          pushTickerEvents, renderCompare, closeCompare,
          showEventEndReveal } from "./render.js";
 import { DEMO } from "./demo-data.js";
@@ -315,18 +316,15 @@ function maybeNotify(events) {
 }
 const stripBracket = s => String(s ?? "").replace(/[\[\]]/g, "").trim();
 
-async function screenshotStandings() {
+async function renderElementToPng(target, { filename, minWidth = 0, hideClasses = [] } = {}) {
   toast("Rendering PNG…", 3500);
   try {
     const { toPng } = await import("https://esm.sh/html-to-image@1.11.13");
-    const target = document.querySelector(".wrap");
     // html-to-image renders whatever bounding box the browser reports, which
-    // on narrow viewports (or when the wrap is centered in a wider window)
-    // truncates the right edge. Pin the capture box to the layout's max
-    // width so the PNG always shows the full desktop layout regardless of
-    // the current viewport.
-    const CAPTURE_WIDTH = 1020;
-    const width = Math.max(target.scrollWidth, CAPTURE_WIDTH);
+    // on narrow viewports (or when the target is centered in a wider window)
+    // truncates the right edge. Pin the capture box to a minimum width so
+    // the PNG always shows a consistent layout regardless of viewport.
+    const width = Math.max(target.scrollWidth, minWidth);
     const height = target.scrollHeight;
     const dataUrl = await toPng(target, {
       backgroundColor: "#060A18",
@@ -336,16 +334,37 @@ async function screenshotStandings() {
       canvasWidth: width,
       canvasHeight: height,
       style: { width: `${width}px`, transform: "none", margin: "0" },
-      filter: node => !node.classList?.contains?.("pin-btn") && !node.classList?.contains?.("vs-btn"),
+      filter: node => !hideClasses.some(c => node.classList?.contains?.(c)),
     });
     const a = document.createElement("a");
     a.href = dataUrl;
-    a.download = `clash-cup-${new Date().toISOString().slice(0, 16).replace(":", "")}.png`;
+    a.download = filename;
     a.click();
   } catch (e) {
     console.error(e);
     toast("Screenshot failed");
   }
+}
+
+const shotStamp = () => new Date().toISOString().slice(0, 16).replace(":", "");
+
+function screenshotStandings() {
+  return renderElementToPng(document.querySelector(".wrap"), {
+    filename: `clash-cup-${shotStamp()}.png`,
+    minWidth: 1020,
+    hideClasses: ["pin-btn", "vs-btn"],
+  });
+}
+
+function screenshotCompare(a, b) {
+  const target = document.getElementById("compareCard");
+  if (!target) return;
+  const slug = t => String(t ?? "clan").replace(/[^\w-]+/g, "").slice(0, 16) || "clan";
+  return renderElementToPng(target, {
+    filename: `clash-cup-vs-${slug(a?.tag)}-vs-${slug(b?.tag)}-${shotStamp()}.png`,
+    minWidth: 780,
+    hideClasses: ["cmp-close", "cmp-shot"],
+  });
 }
 
 function wireControls() {
@@ -406,6 +425,8 @@ onPinToggle(id => {
   savePinned();
   renderAll();
 });
+
+onCompareScreenshot(screenshotCompare);
 
 // Compare picker: click once, banner appears asking for a second clan.
 // Click a second clan → open the modal. Click the same clan twice cancels.

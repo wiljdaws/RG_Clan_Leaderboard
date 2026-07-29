@@ -130,6 +130,8 @@ export function onPinToggle(fn) { pinHandler = fn; }
 // Compare toggle handler — user clicked the "vs" button on a clan row.
 let compareHandler = null;
 export function onCompareToggle(fn) { compareHandler = fn; }
+let compareShotHandler = null;
+export function onCompareScreenshot(fn) { compareShotHandler = fn; }
 
 // Broadcast-style live feed: rank flips and big gains. Newest on the
 // left; capped so the DOM stays cheap. Older events fade based on age.
@@ -372,6 +374,7 @@ export function renderCompare(a, b, ctx = {}) {
   };
   const gapLabel = gap === 0 ? "TIED" : `${gap > 0 ? "+" : ""}${gap.toLocaleString()}`;
   card.innerHTML = `
+    <button class="cmp-shot" type="button" data-shot title="Save head-to-head as PNG" aria-label="Screenshot">◨</button>
     <button class="cmp-close" type="button" data-close aria-label="Close">✕</button>
     <div class="cmp-title">${esc(a.tag)} <span style="color:var(--ink-dim)">vs</span> ${esc(b.tag)}</div>
     <div class="cmp-sub">Head-to-head · rank ${a.rank ?? "–"} vs rank ${b.rank ?? "–"}</div>
@@ -383,6 +386,7 @@ export function renderCompare(a, b, ctx = {}) {
   `;
   modal.hidden = false;
   card.querySelectorAll("[data-close]").forEach(x => x.addEventListener("click", closeCompare));
+  card.querySelectorAll("[data-shot]").forEach(x => x.addEventListener("click", () => compareShotHandler?.(a, b)));
   modal.querySelector(".modal-scrim").addEventListener("click", closeCompare);
 }
 export function closeCompare() { $("compareModal").hidden = true; }

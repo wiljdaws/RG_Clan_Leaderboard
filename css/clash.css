@@ -152,6 +152,13 @@
     display:flex;align-items:center;justify-content:center;
   }
   .cmp-close:hover{color:var(--ink);border-color:var(--line-strong)}
+  .cmp-shot{position:absolute;top:14px;right:56px;
+    width:34px;height:34px;border-radius:50%;
+    background:transparent;border:1px solid var(--line);color:var(--ink-dim);
+    font-size:15px;cursor:pointer;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .cmp-shot:hover{color:var(--ink);border-color:var(--line-strong)}
   .cmp-title{font-family:var(--display);font-weight:700;font-style:italic;font-size:22px;
     text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
   .cmp-sub{color:var(--ink-dim);font-size:13px;font-weight:600;margin-bottom:20px}
