@@ -1,11 +1,30 @@
-// In-memory rolling snapshot log for a single session. Feeds the momentum
-// chip, rank-change ticker, big-gain events, and the end-of-event score
-// projection. Everything is derived client-side — no extra Firestore reads.
-// If ATLAS ever writes historical snapshots server-side we can seed this
-// log from that; for now it warms up over the first few minutes a tab is open.
+// Rolling snapshot log persisted to localStorage so the momentum chip and
+// rank-change ticker survive page reloads. Feeds the momentum chip, rank-
+// change ticker, big-gain events, and the end-of-event score projection.
+// Everything is derived client-side — no extra Firestore reads.
 
 const WINDOW_MS = 60 * 60_000;
-const snapshots = [];
+const STORAGE_KEY = "clashcup:historySnapshots";
+const snapshots = loadSnapshots();
+
+function loadSnapshots() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const cutoff = Date.now() - WINDOW_MS;
+    return parsed.filter(s => s && typeof s.ts === "number" && s.ts >= cutoff);
+  } catch {
+    return [];
+  }
+}
+
+function persistSnapshots() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
+  } catch { /* quota / private mode — momentum falls back to in-memory only */ }
+}
 
 // Persist a slim projection of the standings — enough to reconstruct
 // score-over-time and rank-flip events without holding the full members
@@ -26,6 +45,7 @@ export function recordSnapshot(standings, ts = Date.now()) {
     })),
   });
   prune();
+  persistSnapshots();
 }
 
 function prune() {
