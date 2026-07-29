@@ -338,9 +338,10 @@ async function renderElementToPng(target, { filename, minWidth = 0, extraRightPa
       canvasHeight: height,
       style: {
         width: `${width}px`,
+        maxWidth: "none",
         transform: "none",
         margin: "0",
-        ...(extraRightPad ? { paddingRight: `calc(28px + ${extraRightPad}px)` } : {}),
+        ...(extraRightPad ? { paddingRight: `${28 + extraRightPad}px` } : {}),
       },
       filter: node => !hideClasses.some(c => node.classList?.contains?.(c)),
     });
