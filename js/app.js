@@ -316,7 +316,7 @@ function maybeNotify(events) {
 }
 const stripBracket = s => String(s ?? "").replace(/[\[\]]/g, "").trim();
 
-async function renderElementToPng(target, { filename, minWidth = 0, hideClasses = [] } = {}) {
+async function renderElementToPng(target, { filename, minWidth = 0, extraRightPad = 0, hideClasses = [] } = {}) {
   toast("Rendering PNG…", 3500);
   try {
     const { toPng } = await import("https://esm.sh/html-to-image@1.11.13");
@@ -324,7 +324,10 @@ async function renderElementToPng(target, { filename, minWidth = 0, hideClasses 
     // on narrow viewports (or when the target is centered in a wider window)
     // truncates the right edge. Pin the capture box to a minimum width so
     // the PNG always shows a consistent layout regardless of viewport.
-    const width = Math.max(target.scrollWidth, minWidth);
+    // extraRightPad forces additional right whitespace inside the target,
+    // giving right-aligned content (like the compare modal's delta column)
+    // breathing room away from the card border.
+    const width = Math.max(target.scrollWidth, minWidth) + extraRightPad;
     const height = target.scrollHeight;
     const dataUrl = await toPng(target, {
       backgroundColor: "#060A18",
@@ -333,7 +336,12 @@ async function renderElementToPng(target, { filename, minWidth = 0, hideClasses 
       height,
       canvasWidth: width,
       canvasHeight: height,
-      style: { width: `${width}px`, transform: "none", margin: "0" },
+      style: {
+        width: `${width}px`,
+        transform: "none",
+        margin: "0",
+        ...(extraRightPad ? { paddingRight: `calc(28px + ${extraRightPad}px)` } : {}),
+      },
       filter: node => !hideClasses.some(c => node.classList?.contains?.(c)),
     });
     const a = document.createElement("a");
@@ -363,6 +371,7 @@ function screenshotCompare(a, b) {
   return renderElementToPng(target, {
     filename: `clash-cup-vs-${slug(a?.tag)}-vs-${slug(b?.tag)}-${shotStamp()}.png`,
     minWidth: 780,
+    extraRightPad: 40,
     hideClasses: ["cmp-close", "cmp-shot"],
   });
 }
