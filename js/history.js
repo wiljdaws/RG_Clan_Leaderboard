@@ -4,7 +4,7 @@
 // If ATLAS ever writes historical snapshots server-side we can seed this
 // log from that; for now it warms up over the first few minutes a tab is open.
 
-const WINDOW_MS = 30 * 60_000;
+const WINDOW_MS = 60 * 60_000;
 const snapshots = [];
 
 // Persist a slim projection of the standings — enough to reconstruct

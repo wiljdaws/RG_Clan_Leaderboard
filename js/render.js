@@ -74,10 +74,14 @@ const rosterLabel = (count, max) => max ? `${count} / ${max} members` : `${count
 const momentumChip = m => {
   if (!m) return "";
   const spanMin = Math.max(1, Math.round(m.spanMs / 60_000));
-  const label = `${m.gained > 0 ? "+" : ""}${Math.round(m.gained).toLocaleString()} last ${spanMin}m`;
+  // Once we've accumulated ~a full hour of history the chip reads "last hour";
+  // before that, fall back to the actual minute count so users don't see a
+  // misleading "last hour" when we only have 4m of data.
+  const span = spanMin >= 55 ? "last hour" : `last ${spanMin}m`;
+  const label = `${m.gained > 0 ? "+" : ""}${Math.round(m.gained).toLocaleString()} ${span}`;
   if (m.gained > 0)  return `<span class="momentum hot"  title="Gained ${label}">🔥 ${label}</span>`;
   if (m.gained < 0)  return `<span class="momentum cold" title="Lost ${label}">❄ ${label}</span>`;
-  return `<span class="momentum flat" title="No change ${label}">— flat ${spanMin}m</span>`;
+  return `<span class="momentum flat" title="No change ${label}">— flat ${span}</span>`;
 };
 
 const fmtClock = ms => {
