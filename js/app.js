@@ -320,9 +320,22 @@ async function screenshotStandings() {
   try {
     const { toPng } = await import("https://esm.sh/html-to-image@1.11.13");
     const target = document.querySelector(".wrap");
+    // html-to-image renders whatever bounding box the browser reports, which
+    // on narrow viewports (or when the wrap is centered in a wider window)
+    // truncates the right edge. Pin the capture box to the layout's max
+    // width so the PNG always shows the full desktop layout regardless of
+    // the current viewport.
+    const CAPTURE_WIDTH = 1020;
+    const width = Math.max(target.scrollWidth, CAPTURE_WIDTH);
+    const height = target.scrollHeight;
     const dataUrl = await toPng(target, {
       backgroundColor: "#060A18",
       pixelRatio: 2,
+      width,
+      height,
+      canvasWidth: width,
+      canvasHeight: height,
+      style: { width: `${width}px`, transform: "none", margin: "0" },
       filter: node => !node.classList?.contains?.("pin-btn") && !node.classList?.contains?.("vs-btn"),
     });
     const a = document.createElement("a");
