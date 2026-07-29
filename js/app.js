@@ -97,8 +97,16 @@ function renderAll({ recordHistory = false } = {}) {
     const m = clanMomentum(c.id);
     momentumById.set(c.id, m);
   });
-  const winnerProjection = eventConfig?.endTime && eventConfig?.startTime && standings[0]
-    ? projectScore(standings[0].id, eventConfig.endTime, { eventStartTime: eventConfig.startTime })
+  // Project a rolling 3-hour horizon from the viewer's current time, clamped
+  // to the event end so we don't extrapolate past when scoring stops. This
+  // keeps the "at this pace" line responsive instead of anchored to a static
+  // event-end clock the user can't easily reason about.
+  const PROJECTION_HORIZON_MS = 3 * 60 * 60_000;
+  const projectionTarget = eventConfig?.endTime
+    ? Math.min(Date.now() + PROJECTION_HORIZON_MS, eventConfig.endTime)
+    : null;
+  const winnerProjection = projectionTarget && eventConfig?.startTime && standings[0]
+    ? projectScore(standings[0].id, projectionTarget, { eventStartTime: eventConfig.startTime })
     : null;
 
   const ctx = {
@@ -107,6 +115,7 @@ function renderAll({ recordHistory = false } = {}) {
     mvpUserId,
     momentumById,
     winnerProjection,
+    winnerProjectionTarget: projectionTarget,
     winnerTag: standings[0]?.tag ?? null,
     endTime: eventConfig?.endTime ?? null,
     historyReady: historySpanMs() >= 60_000,

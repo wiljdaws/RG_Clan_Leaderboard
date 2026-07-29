@@ -93,8 +93,9 @@ export function renderPodium(clans, ctx = {}) {
   const label = c => c === clans[0] ? "Champion Seat" : c === clans[1] ? "2nd" : "3rd";
   const isActive = c => c.rows.some(r => r.syncedAt && (Date.now() - r.syncedAt) < HOT_MS);
   const projection = ctx.winnerProjection;
-  const projectionLine = projection && ctx.endTime
-    ? `<div class="projection">At this pace · <b>${projection.projected.toLocaleString()}</b> by ${fmtClock(ctx.endTime)}</div>`
+  const projectionTarget = ctx.winnerProjectionTarget ?? ctx.endTime;
+  const projectionLine = projection && projectionTarget
+    ? `<div class="projection">At this pace · <b>${projection.projected.toLocaleString()}</b> by ${fmtClock(projectionTarget)}</div>`
     : "";
   pod.innerHTML = order.map(c => `
     <div class="step ${cls(c)}" style="--accent:${c.accent ?? "var(--grad-a)"}">
