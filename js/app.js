@@ -97,8 +97,8 @@ function renderAll({ recordHistory = false } = {}) {
     const m = clanMomentum(c.id);
     momentumById.set(c.id, m);
   });
-  const winnerProjection = eventConfig?.endTime && standings[0]
-    ? projectScore(standings[0].id, eventConfig.endTime)
+  const winnerProjection = eventConfig?.endTime && eventConfig?.startTime && standings[0]
+    ? projectScore(standings[0].id, eventConfig.endTime, { eventStartTime: eventConfig.startTime })
     : null;
 
   const ctx = {
