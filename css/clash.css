@@ -230,7 +230,7 @@
   }
   .board-head{
     display:grid;grid-template-columns:64px 1fr 150px 44px;gap:12px;align-items:center;
-    padding:15px 22px;border-bottom:1px solid var(--line);
+    padding:15px 100px 15px 22px;border-bottom:1px solid var(--line);
     font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.26em;
     text-transform:uppercase;color:var(--ink-dim);
     position:sticky;top:0;background:rgba(12,18,48,.92);backdrop-filter:blur(8px);z-index:5;
@@ -241,7 +241,7 @@
   .clan:last-child{border-bottom:none}
   .clan.pinned{background:linear-gradient(90deg,rgba(255,210,74,.05),transparent 40%)}
   .pin-btn{
-    position:absolute;top:14px;right:56px;z-index:2;
+    position:absolute;top:14px;right:22px;z-index:2;
     width:26px;height:26px;border-radius:50%;
     background:transparent;border:none;cursor:pointer;
     color:var(--ink-dim);font-size:14px;padding:0;
@@ -252,7 +252,7 @@
   .pin-btn:focus-visible{outline:2px solid var(--grad-a);outline-offset:2px;border-radius:50%}
   .clan.pinned .pin-btn{color:var(--gold);text-shadow:0 0 10px rgba(255,210,74,.5)}
   .vs-btn{
-    position:absolute;top:14px;right:88px;z-index:2;
+    position:absolute;top:14px;right:56px;z-index:2;
     height:24px;padding:0 10px;border-radius:999px;
     background:transparent;border:1px solid var(--line);cursor:pointer;
     color:var(--ink-dim);font-family:var(--display);font-weight:700;
@@ -264,7 +264,7 @@
   .vs-btn:focus-visible{outline:2px solid var(--grad-a);outline-offset:2px}
   .clan-row{
     display:grid;grid-template-columns:64px 1fr 150px 44px;gap:12px;align-items:center;
-    width:100%;padding:17px 22px;background:none;border:none;cursor:pointer;
+    width:100%;padding:17px 100px 17px 22px;background:none;border:none;cursor:pointer;
     color:inherit;font:inherit;text-align:left;transition:background .16s ease;
   }
   .clan-row:hover{background:rgba(168,85,247,.07)}
@@ -462,8 +462,8 @@
     .step .cmeta{grid-column:2}
     .step .cscore{grid-row:1 / span 3;grid-column:3;margin:0;font-size:22px}
     .step.p1 .cscore{font-size:26px}
-    .board-head{grid-template-columns:42px 1fr 92px 26px;padding:13px 14px}
-    .clan-row{grid-template-columns:42px 1fr 92px 26px;padding:14px 14px}
+    .board-head{grid-template-columns:42px 1fr 92px 26px;padding:13px 76px 13px 14px}
+    .clan-row{grid-template-columns:42px 1fr 92px 26px;padding:14px 76px 14px 14px}
     .rank{font-size:19px} .clan-tag{font-size:15.5px}
     .crest-sm{width:34px;height:34px;font-size:11px}
     .clan-score .val{font-size:18px}
@@ -473,8 +473,8 @@
     .controls select{width:100%}
     .actions{justify-content:flex-end}
     .modal-card{padding:20px 18px}
-    .pin-btn{top:11px;right:44px;width:22px;height:22px;font-size:12px}
-    .vs-btn{top:11px;right:70px;height:20px;padding:0 8px;font-size:9px;letter-spacing:.12em}
+    .pin-btn{top:11px;right:14px;width:22px;height:22px;font-size:12px}
+    .vs-btn{top:11px;right:42px;height:20px;padding:0 8px;font-size:9px;letter-spacing:.12em}
     .board-head.players-head{grid-template-columns:42px 1fr 84px 60px;padding:13px 14px}
     .players-row{grid-template-columns:42px 1fr 84px 60px;padding:14px 14px}
     .p-name .n{font-size:14.5px}
