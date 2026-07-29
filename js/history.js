@@ -101,17 +101,29 @@ export function detectBigGains(threshold = 40) {
   return out.sort((a, b) => b.gain - a.gain);
 }
 
-// Extrapolate the given clan's score to `targetTime` at the current
-// gain-rate over the window. Null when we don't have a meaningful rate.
-export function projectScore(clanId, targetTime, windowMs = WINDOW_MS) {
-  const m = clanMomentum(clanId, windowMs);
-  if (!m || m.spanMs < 60_000) return null;
+// Extrapolate the given clan's score to `targetTime` using their
+// session-average gain rate (total score / time since event start),
+// NOT the recent-window rate — a single lost match at the tail of a
+// long grinding session shouldn't drag the projection to absurd
+// negatives. This matches what "at this pace" means conversationally:
+// the pace they've held all event.
+//
+// Returns null when the projection would be misleading — event too
+// fresh, already ended, or the clan is net-negative so far (no
+// meaningful "pace" to extrapolate).
+export function projectScore(clanId, targetTime, opts = {}) {
+  const eventStartTime = opts.eventStartTime;
+  if (!eventStartTime) return null;
   const now = latest();
-  const clan = now?.clans.find(c => c.id === clanId);
+  if (!now) return null;
+  const clan = now.clans.find(c => c.id === clanId);
   if (!clan) return null;
+  const elapsedMs = now.ts - eventStartTime;
   const remainingMs = targetTime - now.ts;
-  if (remainingMs <= 0) return null;
-  const ratePerMs = m.gained / m.spanMs;
+  if (elapsedMs < 30 * 60_000) return null;   // event too fresh — noisy
+  if (remainingMs <= 0) return null;           // already ended
+  if (clan.score <= 0) return null;            // don't project down from zero
+  const ratePerMs = clan.score / elapsedMs;
   return {
     projected: Math.round(clan.score + ratePerMs * remainingMs),
     ratePerHour: Math.round(ratePerMs * 3_600_000),
