@@ -374,7 +374,12 @@ export function renderCompare(a, b, ctx = {}) {
   };
   const gapLabel = gap === 0 ? "TIED" : `${gap > 0 ? "+" : ""}${gap.toLocaleString()}`;
   card.innerHTML = `
-    <button class="cmp-shot" type="button" data-shot title="Save head-to-head as PNG" aria-label="Screenshot">◨</button>
+    <button class="cmp-shot" type="button" data-shot title="Save head-to-head as PNG" aria-label="Screenshot">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+    </button>
     <button class="cmp-close" type="button" data-close aria-label="Close">✕</button>
     <div class="cmp-title">${esc(a.tag)} <span style="color:var(--ink-dim)">vs</span> ${esc(b.tag)}</div>
     <div class="cmp-sub">Head-to-head · rank ${a.rank ?? "–"} vs rank ${b.rank ?? "–"}</div>
