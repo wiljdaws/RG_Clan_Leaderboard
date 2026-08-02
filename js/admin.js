@@ -93,6 +93,7 @@ export async function disbandClan({
   clanId,
   message = "",
   now = new Date().toISOString(),
+  noticeType = "admin_disbanded",
   releaseReservations = false,
 }) {
   if (!fb?.db || !clanId) throw new Error("Missing clan details.");
@@ -120,7 +121,7 @@ export async function disbandClan({
       transaction.set(
         fb.doc(fb.db, COLLECTIONS.clanNotices, userId),
         {
-          type: "admin_disbanded",
+          type: noticeType,
           clanId,
           clanName: clan.name ?? "Unknown clan",
           message: cleanMessage,
@@ -319,6 +320,7 @@ export async function initClanAdmin({ app, db }) {
         fb: firebase,
         clanId: selectedClan.id,
         message: document.getElementById("adminDisbandMessage")?.value,
+        noticeType: ADMIN_FEATURES.noticeType,
         releaseReservations: ADMIN_FEATURES.reservationCleanupEnabled,
       });
       closeDisbandDialog();

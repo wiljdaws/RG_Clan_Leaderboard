@@ -27,6 +27,8 @@ export const ADMIN_EMAILS = [
 
 export const ADMIN_FEATURES = {
   disbandEnabled: true,
+  // Older ATLAS versions already know how to show this notice type.
+  noticeType: "kicked",
   // Reservation records do not exist in production yet.
   reservationCleanupEnabled: false,
 };

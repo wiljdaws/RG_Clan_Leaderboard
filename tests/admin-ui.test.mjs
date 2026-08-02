@@ -36,6 +36,7 @@ test("admin form has search, confirmation, message, and error controls", () => {
 
 test("live disbanding requires a clear yes or no choice", () => {
   assert.match(config, /disbandEnabled:\s*true/);
+  assert.match(config, /noticeType:\s*"kicked"/);
   assert.match(config, /reservationCleanupEnabled:\s*false/);
   assert.match(html, /id="adminDisbandWarning"/);
   assert.match(html, />No<\/button>/);
