@@ -110,6 +110,27 @@ test("disband transaction removes bridge directory and every known lock", async 
   assert.ok(notices.every(operation => operation.value.type === "kicked"));
 });
 
+test("legacy disband works before reservation locks are active", async () => {
+  const { fb, operations } = fakeFirebase();
+  const result = await disbandClan({
+    fb,
+    clanId: "c1",
+    reservationsActive: false,
+    releaseReservations: false,
+  });
+
+  assert.equal(result.notified, 5);
+  assert.equal(result.devicesReleased, 0);
+  const deletes = operations
+    .filter(operation => operation.type === "delete")
+    .map(operation => operation.ref);
+  assert.deepEqual(deletes, ["clans/c1"]);
+  assert.equal(operations.some(operation =>
+    operation.type === "set" && operation.ref === "clans_directory/index"), true);
+  assert.equal(operations.filter(operation =>
+    operation.type === "set" && operation.ref.startsWith("clan_notices/")).length, 5);
+});
+
 test("disband refuses to delete the clan while cleanup is paused", async () => {
   const { fb, operations } = fakeFirebase();
   await assert.rejects(

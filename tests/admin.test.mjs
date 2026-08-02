@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  adminDisbandEnabled,
   clanNameKey,
   directoryWithoutClan,
   disbandWarning,
@@ -29,6 +30,14 @@ test("reservation cleanup follows the live event and emergency switch", () => {
   assert.equal(reservationCleanupEnabled(
     { useClanReservations: true },
     { reservationCleanupEmergencyDisabled: true },
+  ), false);
+  assert.equal(adminDisbandEnabled({ useClanReservations: false }), true);
+  assert.equal(adminDisbandEnabled(
+    { useClanReservations: true },
+    {
+      disbandEnabled: true,
+      reservationCleanupEmergencyDisabled: true,
+    },
   ), false);
 });
 

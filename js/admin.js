@@ -90,6 +90,17 @@ export function reservationCleanupEnabled(
     && features.reservationCleanupEmergencyDisabled !== true;
 }
 
+export function adminDisbandEnabled(
+  event,
+  features = ADMIN_FEATURES,
+) {
+  return features.disbandEnabled === true
+    && (
+      event?.useClanReservations !== true
+      || reservationCleanupEnabled(event, features)
+    );
+}
+
 function addDeviceIds(ids, source) {
   if (!source || typeof source !== "object") return;
   if (typeof source.deviceId === "string" && source.deviceId) {
@@ -129,10 +140,11 @@ export async function disbandClan({
   message = "",
   now = new Date().toISOString(),
   noticeType = "kicked",
+  reservationsActive = true,
   releaseReservations = false,
 }) {
   if (!fb?.db || !clanId) throw new Error("Missing clan details.");
-  if (!releaseReservations) {
+  if (reservationsActive && !releaseReservations) {
     throw new Error("Clan cleanup is paused. Nothing was changed.");
   }
 
@@ -162,11 +174,13 @@ export async function disbandClan({
       : [];
     const legacyDirectoryEntry = currentDirectory.find(entry => entry?.id === clanId);
     const memberIds = knownMemberIds(clan, directoryShard, legacyDirectoryEntry);
-    const membershipRefs = memberIds.map(userId =>
-      fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
-    const membershipSnapshots = await Promise.all(
-      membershipRefs.map(ref => transaction.get(ref)),
-    );
+    const membershipRefs = releaseReservations
+      ? memberIds.map(userId =>
+        fb.doc(fb.db, COLLECTIONS.clanMemberships, userId))
+      : [];
+    const membershipSnapshots = releaseReservations
+      ? await Promise.all(membershipRefs.map(ref => transaction.get(ref)))
+      : [];
     const membershipRecords = membershipSnapshots
       .filter(snapshot => snapshot.exists())
       .map(snapshot => snapshot.data());
@@ -197,21 +211,25 @@ export async function disbandClan({
           at: now,
         },
       );
-      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
+      if (releaseReservations) {
+        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
+      }
     }
 
-    for (const deviceId of deviceIds) {
-      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanDevices, deviceId));
-    }
+    if (releaseReservations) {
+      for (const deviceId of deviceIds) {
+        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanDevices, deviceId));
+      }
 
-    for (const nameKey of nameKeys) {
-      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanNameKeys, nameKey));
-    }
-    for (const tagKey of tagKeys) {
-      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanTagKeys, tagKey));
-    }
+      for (const nameKey of nameKeys) {
+        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanNameKeys, nameKey));
+      }
+      for (const tagKey of tagKeys) {
+        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanTagKeys, tagKey));
+      }
 
-    transaction.delete(directoryShardRef);
+      transaction.delete(directoryShardRef);
+    }
     if (legacyDirectorySnapshot.exists()) {
       transaction.set(legacyDirectoryRef, {
         clans: directoryWithoutClan(currentDirectory, clanId),
@@ -223,7 +241,7 @@ export async function disbandClan({
       clanId,
       clanName: clan.name ?? "Unknown clan",
       notified: memberIds.length,
-      devicesReleased: deviceIds.length,
+      devicesReleased: releaseReservations ? deviceIds.length : 0,
     };
   });
 
@@ -251,7 +269,7 @@ function closeDisbandDialog() {
 }
 
 function openDisbandDialog(clan) {
-  if (!ADMIN_FEATURES.disbandEnabled || !reservationCleanupEnabled(adminEvent)) return;
+  if (!adminDisbandEnabled(adminEvent)) return;
   previousFocus = document.activeElement;
   selectedClan = clan;
   text("adminDisbandClanName", `${clan.tag ? `[${clan.tag}] ` : ""}${clan.name}`);
@@ -269,7 +287,7 @@ function renderAdminClans() {
     ?.trim()
     .toLowerCase() ?? "";
   const duplicateIds = duplicateClanIds(adminClans);
-  const cleanupReady = reservationCleanupEnabled(adminEvent);
+  const canDisband = adminDisbandEnabled(adminEvent);
   const clans = adminClans
     .filter(clan => {
       if (!query) return true;
@@ -315,7 +333,6 @@ function renderAdminClans() {
     const button = document.createElement("button");
     button.className = "admin-danger";
     button.type = "button";
-    const canDisband = ADMIN_FEATURES.disbandEnabled && cleanupReady;
     button.textContent = canDisband ? "Disband" : "Locked";
     button.disabled = !canDisband;
     button.addEventListener("click", () => openDisbandDialog(clan));
@@ -334,7 +351,9 @@ export function setAdminEvent(event) {
   adminEvent = event ?? null;
   const note = document.getElementById("adminCleanupNote");
   if (note) {
-    note.textContent = reservationCleanupEnabled(adminEvent)
+    note.textContent = adminEvent?.useClanReservations !== true
+      ? "Legacy disband is available. Reservation locks are not active yet."
+      : reservationCleanupEnabled(adminEvent)
       ? "Every disband asks for confirmation and removes all reservation locks."
       : "Disbanding is locked until reservation cleanup is enabled for the live event.";
   }
@@ -406,6 +425,7 @@ export async function initClanAdmin({ app, db }) {
         clanId: selectedClan.id,
         message: document.getElementById("adminDisbandMessage")?.value,
         noticeType: ADMIN_FEATURES.noticeType,
+        reservationsActive: adminEvent?.useClanReservations === true,
         releaseReservations: reservationCleanupEnabled(adminEvent),
       });
       closeDisbandDialog();
@@ -428,7 +448,7 @@ export async function initClanAdmin({ app, db }) {
       text("adminAuthNote", "Sign in with an approved Google account.");
     } else if (!isAdmin) {
       text("adminAuthNote", `${user.email} does not have admin access.`);
-    } else if (ADMIN_FEATURES.disbandEnabled && reservationCleanupEnabled(adminEvent)) {
+    } else if (adminDisbandEnabled(adminEvent)) {
       text("adminAuthNote", "Admin access is active. Every disband needs confirmation.");
     } else {
       text("adminAuthNote", "Admin access is ready. Reservation cleanup is currently locked.");
