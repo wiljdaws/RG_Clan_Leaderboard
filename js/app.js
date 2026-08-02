@@ -14,6 +14,7 @@ import { recordSnapshot, clanMomentum, projectScore, detectRankChanges,
 import {
   initClanAdmin,
   setAdminClans,
+  setAdminEvent,
   showAdminUnavailable,
 } from "./admin.js";
 
@@ -196,8 +197,14 @@ async function boot() {
 
   try {
     fb.onSnapshot(fb.doc(fb.db, ...COLLECTIONS.eventDoc), snap => {
-      if (!snap.exists()) { eventConfig = null; renderPhase(null); return; }
+      if (!snap.exists()) {
+        eventConfig = null;
+        setAdminEvent(null);
+        renderPhase(null);
+        return;
+      }
       eventConfig = parseEventDoc(snap.data());
+      setAdminEvent(eventConfig);
       setEventTitle(eventConfig.name);
       renderPhase(eventConfig);
       renderAll();

@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   clanNameKey,
   directoryWithoutClan,
+  disbandWarning,
   duplicateClanIds,
+  formatEventTimeLeft,
   normalizeClanName,
   normalizeClanTag,
 } from "../js/admin.js";
@@ -39,4 +41,18 @@ test("disbanding removes only the chosen directory row", () => {
     { id: "two", name: "Two" },
   ]);
   assert.equal(directory.length, 2);
+});
+
+test("active events show the exact time left before disbanding", () => {
+  const now = Date.parse("2026-08-02T12:00:00.000Z");
+  const end = now + ((2 * 24 + 3) * 60 + 15) * 60_000;
+  assert.equal(formatEventTimeLeft(end, now), "2d 3h");
+  assert.equal(
+    disbandWarning(end, now),
+    "A clan event is still going with 2d 3h left. Do you want to disband?",
+  );
+  assert.equal(
+    disbandWarning(now, now),
+    "Do you want to disband this clan?",
+  );
 });

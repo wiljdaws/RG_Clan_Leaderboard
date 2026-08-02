@@ -25,9 +25,10 @@ export const ADMIN_EMAILS = [
   "therootedengineer@gmail.com",
 ];
 
-// Keep live disbanding off until the Clan event ends.
 export const ADMIN_FEATURES = {
-  disbandEnabled: false,
+  disbandEnabled: true,
+  // Reservation records do not exist in production yet.
+  reservationCleanupEnabled: false,
 };
 
 export const SDK = "10.12.2";

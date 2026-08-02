@@ -34,9 +34,12 @@ test("admin form has search, confirmation, message, and error controls", () => {
   }
 });
 
-test("live disbanding remains locked for the event", () => {
-  assert.match(config, /disbandEnabled:\s*false/);
-  assert.match(html, /Disbanding stays locked until the Clan event ends\./);
+test("live disbanding requires a clear yes or no choice", () => {
+  assert.match(config, /disbandEnabled:\s*true/);
+  assert.match(config, /reservationCleanupEnabled:\s*false/);
+  assert.match(html, /id="adminDisbandWarning"/);
+  assert.match(html, />No<\/button>/);
+  assert.match(html, />Yes, disband<\/button>/);
 });
 
 test("admin controls have a single-column mobile layout", () => {

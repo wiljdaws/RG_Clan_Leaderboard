@@ -10,6 +10,7 @@ let adminReady = false;
 let isAdmin = false;
 let selectedClan = null;
 let firebase = null;
+let eventEndTime = 0;
 
 export function normalizeClanName(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -54,6 +55,27 @@ export function directoryWithoutClan(clans, clanId) {
     .filter(clan => clan?.id !== clanId);
 }
 
+export function formatEventTimeLeft(endTime, now = Date.now()) {
+  const remaining = Number(endTime) - Number(now);
+  if (!Number.isFinite(remaining) || remaining <= 0) return "";
+  const totalMinutes = Math.max(1, Math.ceil(remaining / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days ? `${days}d` : "",
+    hours ? `${hours}h` : "",
+    !days && minutes ? `${minutes}m` : "",
+  ].filter(Boolean).join(" ");
+}
+
+export function disbandWarning(endTime, now = Date.now()) {
+  const timeLeft = formatEventTimeLeft(endTime, now);
+  return timeLeft
+    ? `A clan event is still going with ${timeLeft} left. Do you want to disband?`
+    : "Do you want to disband this clan?";
+}
+
 function clanDeviceIds(clan) {
   const ids = new Set();
   for (const member of clan?.members ?? []) {
@@ -71,6 +93,7 @@ export async function disbandClan({
   clanId,
   message = "",
   now = new Date().toISOString(),
+  releaseReservations = false,
 }) {
   if (!fb?.db || !clanId) throw new Error("Missing clan details.");
 
@@ -86,11 +109,11 @@ export async function disbandClan({
     }
 
     const clan = { id: clanId, ...clanSnapshot.data() };
-    const nameKey = await clanNameKey(clan.name);
-    const tagKey = normalizeClanTag(clan.tag);
+    const nameKey = releaseReservations ? await clanNameKey(clan.name) : "";
+    const tagKey = releaseReservations ? normalizeClanTag(clan.tag) : "";
     const members = clan.members ?? [];
     const memberIds = [...new Set(members.map(member => member?.userId).filter(Boolean))];
-    const deviceIds = clanDeviceIds(clan);
+    const deviceIds = releaseReservations ? clanDeviceIds(clan) : [];
     const cleanMessage = String(message ?? "").trim().slice(0, 300);
 
     for (const userId of memberIds) {
@@ -104,7 +127,9 @@ export async function disbandClan({
           at: now,
         },
       );
-      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
+      if (releaseReservations) {
+        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
+      }
     }
 
     for (const deviceId of deviceIds) {
@@ -158,6 +183,7 @@ function openDisbandDialog(clan) {
   if (!ADMIN_FEATURES.disbandEnabled) return;
   selectedClan = clan;
   text("adminDisbandClanName", `${clan.tag ? `[${clan.tag}] ` : ""}${clan.name}`);
+  text("adminDisbandWarning", disbandWarning(eventEndTime));
   const modal = document.getElementById("adminDisbandModal");
   if (modal) modal.hidden = false;
   document.getElementById("adminDisbandMessage")?.focus();
@@ -215,9 +241,7 @@ function renderAdminClans() {
     const button = document.createElement("button");
     button.className = "admin-danger";
     button.type = "button";
-    button.textContent = ADMIN_FEATURES.disbandEnabled
-      ? "Disband"
-      : "Locked until event ends";
+    button.textContent = ADMIN_FEATURES.disbandEnabled ? "Disband" : "Locked";
     button.disabled = !ADMIN_FEATURES.disbandEnabled;
     button.addEventListener("click", () => openDisbandDialog(clan));
 
@@ -229,6 +253,10 @@ function renderAdminClans() {
 export function setAdminClans(clans) {
   adminClans = Array.isArray(clans) ? clans : [];
   renderAdminClans();
+}
+
+export function setAdminEvent(event) {
+  eventEndTime = Number(event?.endTime) || 0;
 }
 
 export function showAdminUnavailable(message) {
@@ -291,6 +319,7 @@ export async function initClanAdmin({ app, db }) {
         fb: firebase,
         clanId: selectedClan.id,
         message: document.getElementById("adminDisbandMessage")?.value,
+        releaseReservations: ADMIN_FEATURES.reservationCleanupEnabled,
       });
       closeDisbandDialog();
       text("adminAuthNote", `${result.clanName} was disbanded. ${result.notified} player${result.notified === 1 ? "" : "s"} will see the notice.`);
@@ -298,7 +327,7 @@ export async function initClanAdmin({ app, db }) {
       text("adminDisbandError", error?.message || "Could not disband that clan.");
     } finally {
       confirmButton.disabled = false;
-      confirmButton.textContent = "Disband clan";
+      confirmButton.textContent = "Yes, disband";
     }
   });
 
@@ -313,7 +342,7 @@ export async function initClanAdmin({ app, db }) {
     } else if (!isAdmin) {
       text("adminAuthNote", `${user.email} does not have admin access.`);
     } else if (ADMIN_FEATURES.disbandEnabled) {
-      text("adminAuthNote", "Admin access is active.");
+      text("adminAuthNote", "Admin access is active. Every disband needs confirmation.");
     } else {
       text("adminAuthNote", "Admin access is ready. Disbanding stays locked until the event ends.");
     }
