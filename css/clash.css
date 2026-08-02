@@ -22,7 +22,7 @@
   }
   .wrap{max-width:1020px;margin:0 auto}
 
-  header{text-align:center;margin-bottom:clamp(26px,4vw,48px)}
+  header{position:relative;text-align:center;margin-bottom:clamp(26px,4vw,48px)}
   .chips{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
   .chip{
     display:inline-flex;align-items:center;gap:8px;
@@ -116,6 +116,108 @@
   }
   @keyframes toastIn{ from{opacity:0;transform:translate(-50%,10px)} to{opacity:1;transform:translate(-50%,0)} }
 
+  .admin-access{
+    position:absolute;top:0;right:0;
+    display:grid;grid-template-columns:auto auto;gap:6px 10px;justify-items:end;
+    font-family:var(--display);
+  }
+  .admin-access button{
+    padding:7px 12px;border-radius:999px;cursor:pointer;
+    color:var(--ink-dim);background:rgba(12,18,48,.72);
+    border:1px solid var(--line);font:600 11px var(--display);
+    letter-spacing:.08em;
+  }
+  .admin-access button:hover{color:var(--ink);border-color:var(--line-strong)}
+  .admin-access button:focus-visible{outline:2px solid var(--grad-a);outline-offset:2px}
+  .admin-access button:disabled{opacity:.45;cursor:not-allowed}
+  #adminUserEmail{align-self:center;color:var(--ink-dim);font-size:11px}
+  #adminAuthNote{
+    grid-column:1/-1;max-width:300px;text-align:right;
+    color:var(--ink-dim);font-size:10px;line-height:1.35;
+  }
+
+  .admin-panel{
+    margin:0 0 20px;padding:24px;
+    background:rgba(12,18,48,.9);border:1px solid var(--line-strong);
+    border-radius:18px;box-shadow:0 22px 64px rgba(0,0,0,.38);
+  }
+  .admin-panel[hidden]{display:none}
+  .admin-panel-head{
+    display:grid;grid-template-columns:1fr minmax(220px,320px);
+    align-items:end;gap:24px;margin-bottom:16px;
+  }
+  .admin-kicker{
+    display:block;margin-bottom:5px;color:var(--gold);
+    font:700 10px var(--display);letter-spacing:.24em;text-transform:uppercase;
+  }
+  .admin-panel h2,.admin-disband-card h2{
+    font:700 24px/1.15 var(--display);letter-spacing:.01em;
+  }
+  .admin-panel-head p,.admin-disband-card p{
+    margin-top:5px;color:var(--ink-dim);font-size:15px;line-height:1.4;
+  }
+  #adminClanSearch,.admin-disband-card textarea{
+    width:100%;padding:11px 13px;border-radius:10px;
+    color:var(--ink);background:rgba(6,10,24,.7);
+    border:1px solid var(--line);outline:none;
+    font:600 14px var(--body);
+  }
+  #adminClanSearch:focus,.admin-disband-card textarea:focus{border-color:var(--grad-a)}
+  .admin-lock-note{
+    padding:9px 12px;margin-bottom:8px;border-radius:9px;
+    color:var(--gold);background:rgba(255,210,74,.07);
+    font-size:13px;font-weight:600;
+  }
+  .admin-clan-list{display:flex;flex-direction:column}
+  .admin-clan{
+    display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center;
+    padding:13px 4px;border-bottom:1px solid var(--line);
+  }
+  .admin-clan:last-child{border-bottom:0}
+  .admin-clan-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .admin-clan-copy strong{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font:700 15px var(--display);
+  }
+  .admin-clan-copy span{color:var(--ink-dim);font-size:12px}
+  .admin-clan-copy .admin-duplicate{color:var(--loss);font-weight:700}
+  .admin-empty{padding:24px 0;color:var(--ink-dim);text-align:center}
+  .admin-danger,.admin-secondary{
+    padding:9px 13px;border-radius:9px;cursor:pointer;
+    font:700 11px var(--display);letter-spacing:.05em;
+  }
+  .admin-danger{
+    color:#FFE4E9;background:rgba(251,113,133,.12);
+    border:1px solid rgba(251,113,133,.42);
+  }
+  .admin-danger:hover:not(:disabled){background:rgba(251,113,133,.2)}
+  .admin-danger:disabled{opacity:.48;cursor:not-allowed}
+  .admin-secondary{color:var(--ink);background:transparent;border:1px solid var(--line)}
+  .admin-secondary:hover{border-color:var(--line-strong)}
+  .admin-danger:focus-visible,.admin-secondary:focus-visible{
+    outline:2px solid var(--grad-a);outline-offset:2px;
+  }
+  .admin-disband-card{max-width:560px}
+  .admin-disband-card label{
+    display:block;margin:20px 0 7px;
+    color:var(--ink);font:700 12px var(--display);
+  }
+  .admin-disband-card textarea{resize:vertical;min-height:110px;line-height:1.5}
+  .admin-error{min-height:20px!important;color:var(--loss)!important;font-weight:700}
+  .admin-disband-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}
+
+  @media (max-width:760px){
+    .admin-access{
+      position:static;display:flex;justify-content:center;align-items:center;
+      flex-wrap:wrap;margin-bottom:16px;
+    }
+    #adminAuthNote{flex-basis:100%;max-width:none;text-align:center}
+    .admin-panel{padding:18px}
+    .admin-panel-head{grid-template-columns:1fr;gap:14px}
+    .admin-clan{grid-template-columns:1fr}
+    .admin-clan .admin-danger{justify-self:start}
+  }
+
   /* Pick banner while the user is picking a compare partner. */
   .pick-banner{
     position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
@@ -127,6 +229,7 @@
     backdrop-filter:blur(6px);box-shadow:0 12px 32px rgba(0,0,0,.5);
     animation:toastIn .24s ease-out;
   }
+  .pick-banner[hidden]{display:none}
   .pick-banner b{color:var(--grad-a);letter-spacing:.05em}
   .link-btn{
     background:transparent;border:none;color:var(--ink-dim);
@@ -459,6 +562,8 @@
   .perms-note:empty{display:none}
 
   @media (max-width:680px){
+    body{overflow-x:hidden}
+    h1{font-size:clamp(32px,10vw,40px)}
     .podium{grid-template-columns:1fr;gap:10px}
     .step{display:grid;grid-template-columns:auto 1fr auto;align-items:center;
       text-align:left;gap:4px 14px;padding:14px 16px}
@@ -476,9 +581,12 @@
     .clan-score .val{font-size:18px}
     .members-inner{padding:0 10px 16px;overflow-x:auto}
     thead th:nth-child(3),tbody td:nth-child(3){display:none}
-    .controls{grid-template-columns:1fr;gap:8px}
+    .controls{grid-template-columns:minmax(0,1fr);gap:8px;max-width:100%}
+    .controls>*{min-width:0;max-width:100%}
+    .tabs{display:flex;width:100%;overflow-x:auto}
+    .tab{flex:1;padding-inline:10px;white-space:nowrap}
     .controls select{width:100%}
-    .actions{justify-content:flex-end}
+    .actions{justify-content:flex-start;flex-wrap:wrap}
     .modal-card{padding:20px 18px}
     .pin-btn{top:11px;right:14px;width:22px;height:22px;font-size:12px}
     .vs-btn{top:11px;right:42px;height:20px;padding:0 8px;font-size:9px;letter-spacing:.12em}
@@ -486,6 +594,7 @@
     .players-row{grid-template-columns:42px 1fr 84px 60px;padding:14px 14px}
     .p-name .n{font-size:14.5px}
     .p-delta{font-size:16px}
+    footer{overflow-wrap:anywhere}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation:none!important;transition:none!important}

@@ -11,6 +11,11 @@ import { renderHeaderStats, renderPodium, renderStandings, renderPlayers,
 import { DEMO } from "./demo-data.js";
 import { recordSnapshot, clanMomentum, projectScore, detectRankChanges,
          detectBigGains, historySpanMs } from "./history.js";
+import {
+  initClanAdmin,
+  setAdminClans,
+  showAdminUnavailable,
+} from "./admin.js";
 
 let eventConfig = null;
 let lastRawClans = [];
@@ -180,7 +185,14 @@ async function boot() {
       await import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-firestore.js`);
     const app = initializeApp(FIREBASE_CONFIG);
     fb = { db: getFirestore(app), doc, collection, onSnapshot };
-  } catch (e) { return loadDemo("SDK load failed: " + e.message); }
+    initClanAdmin({ app, db: fb.db }).catch(error => {
+      console.error("[ClashCup] admin login failed:", error);
+      showAdminUnavailable("Admin login could not load.");
+    });
+  } catch (e) {
+    showAdminUnavailable("Admin login could not load.");
+    return loadDemo("SDK load failed: " + e.message);
+  }
 
   try {
     fb.onSnapshot(fb.doc(fb.db, ...COLLECTIONS.eventDoc), snap => {
@@ -194,6 +206,7 @@ async function boot() {
     fb.onSnapshot(fb.collection(fb.db, COLLECTIONS.clans), snap => {
       lastRawClans = [];
       snap.forEach(ds => lastRawClans.push({ id: ds.id, ...ds.data() }));
+      setAdminClans(lastRawClans);
       renderAll({ recordHistory: true });
       publishLiveEvents();
       markSynced();

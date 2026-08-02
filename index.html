@@ -34,6 +34,12 @@
 <body>
 <div class="wrap">
   <header>
+    <div class="admin-access" aria-label="Clan admin">
+      <button id="adminLoginBtn" type="button">Admin sign in</button>
+      <span id="adminUserEmail"></span>
+      <button id="adminLogoutBtn" type="button" hidden>Sign out</button>
+      <small id="adminAuthNote">Sign in with an approved Google account.</small>
+    </div>
     <div class="chips">
       <span class="chip" id="phaseChip"><span class="dot"></span><span id="phaseText">Connecting…</span></span>
       <span class="chip" id="countChip" style="display:none"><strong id="countdown">–</strong></span>
@@ -76,10 +82,41 @@
     </div>
   </div>
 
+  <section class="admin-panel" id="adminPanel" aria-labelledby="adminPanelTitle" hidden>
+    <div class="admin-panel-head">
+      <div>
+        <span class="admin-kicker">Private controls</span>
+        <h2 id="adminPanelTitle">Clan admin</h2>
+        <p>Review clans and remove one when needed.</p>
+      </div>
+      <input id="adminClanSearch" type="search" placeholder="Search clans or players" aria-label="Search admin clan list">
+    </div>
+    <div class="admin-lock-note">Disbanding stays locked until the Clan event ends.</div>
+    <div class="admin-clan-list" id="adminClanList">
+      <p class="admin-empty">Loading clans...</p>
+    </div>
+  </section>
+
   <!-- Compare modal — opened when the user picks two clans via the "vs" buttons. -->
   <div class="modal" id="compareModal" role="dialog" aria-modal="true" aria-label="Compare clans" hidden>
     <div class="modal-scrim" data-close></div>
     <div class="modal-card" id="compareCard"></div>
+  </div>
+
+  <div class="modal" id="adminDisbandModal" role="dialog" aria-modal="true" aria-labelledby="adminDisbandTitle" hidden>
+    <div class="modal-scrim" data-close></div>
+    <div class="modal-card admin-disband-card">
+      <span class="admin-kicker">Admin action</span>
+      <h2 id="adminDisbandTitle">Disband <span id="adminDisbandClanName"></span>?</h2>
+      <p>This removes the clan and tells every current member the next time ATLAS loads.</p>
+      <label for="adminDisbandMessage">Message (optional)</label>
+      <textarea id="adminDisbandMessage" maxlength="300" rows="4" placeholder="Why is this clan being removed?"></textarea>
+      <p class="admin-error" id="adminDisbandError" role="alert"></p>
+      <div class="admin-disband-actions">
+        <button id="adminDisbandCancel" class="admin-secondary" type="button">Cancel</button>
+        <button id="adminDisbandConfirm" class="admin-danger" type="button">Disband clan</button>
+      </div>
+    </div>
   </div>
 
   <!-- Compare pick banner — shown after selecting one clan while waiting for the second. -->

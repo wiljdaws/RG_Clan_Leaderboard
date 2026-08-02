@@ -1,5 +1,4 @@
-// Firebase web config — identical to the ATLAS userscript (Pal's public
-// client config; safe to commit, access is governed by Firestore rules).
+// This is the same public Firebase config ATLAS uses.
 export const FIREBASE_CONFIG = {
   apiKey: "AIzaSyD29s2Jku_DZ42keIQAETgKg7HWt__QEwY",
   authDomain: "rgleaderboard.firebaseapp.com",
@@ -10,12 +9,25 @@ export const FIREBASE_CONFIG = {
   measurementId: "G-JW3Q972P9T",
 };
 
-// Firestore locations the page reads. Writes stay in ATLAS.
 export const COLLECTIONS = {
   clans: "clans",
+  clanDirectory: ["clans_directory", "index"],
+  clanNotices: "clan_notices",
+  clanNameKeys: "clan_name_keys",
+  clanTagKeys: "clan_tag_keys",
+  clanMemberships: "clan_memberships",
+  clanDevices: "clan_devices",
   eventDoc: ["events", "current"],
 };
 
-// Firebase JS SDK version — kept in lockstep with ATLAS so both clients
-// exercise the same SDK behavior against the same rules.
-export const SDK = "10.12.0";
+export const ADMIN_EMAILS = [
+  "underflagfg@gmail.com",
+  "therootedengineer@gmail.com",
+];
+
+// Keep live disbanding off until the Clan event ends.
+export const ADMIN_FEATURES = {
+  disbandEnabled: false,
+};
+
+export const SDK = "10.12.2";
