@@ -1,165 +1,244 @@
-// Rolling snapshot log persisted to localStorage so the momentum chip and
-// rank-change ticker survive page reloads. Feeds the momentum chip, rank-
-// change ticker, big-gain events, and the end-of-event score projection.
-// Everything is derived client-side — no extra Firestore reads.
+// Event-scoped, local-only history. Snapshots keep just scores, ranks, and
+// member deltas so replay never changes or duplicates live score computation.
 
 const WINDOW_MS = 60 * 60_000;
-const STORAGE_KEY = "clashcup:historySnapshots";
-const snapshots = loadSnapshots();
+const STORAGE_KEY = "clashcup:eventHistory:v2";
+const MAX_EVENTS = 8;
+const MAX_SNAPSHOTS = 240;
 
-function loadSnapshots() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const cutoff = Date.now() - WINDOW_MS;
-    return parsed.filter(s => s && typeof s.ts === "number" && s.ts >= cutoff);
-  } catch {
-    return [];
+const blankData = () => ({ version: 2, events: {} });
+const eventIdOf = eventConfig =>
+  eventConfig?.startTime != null ? String(eventConfig.startTime) : null;
+
+function fallbackStorage() {
+  const values = new Map();
+  return {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  };
+}
+
+export class EventHistoryStore {
+  constructor({
+    storage = typeof localStorage === "undefined" ? fallbackStorage() : localStorage,
+    now = () => Date.now(),
+  } = {}) {
+    this.storage = storage;
+    this.now = now;
+    this.error = null;
+    this.data = this.load();
+  }
+
+  load() {
+    try {
+      const parsed = JSON.parse(this.storage.getItem(STORAGE_KEY) || "null");
+      if (parsed?.version === 2 && parsed.events && typeof parsed.events === "object") {
+        return parsed;
+      }
+    } catch {
+      this.error = "Local history could not be read.";
+    }
+    return blankData();
+  }
+
+  persist() {
+    try {
+      this.storage.setItem(STORAGE_KEY, JSON.stringify(this.data));
+      this.error = null;
+    } catch {
+      this.error = "Local history could not be saved.";
+    }
+  }
+
+  record(eventConfig, standings, ts = this.now()) {
+    const id = eventIdOf(eventConfig);
+    if (!id || !Array.isArray(standings)) return false;
+    const record = this.data.events[id] ?? {
+      event: {
+        id,
+        name: eventConfig.name ?? "Clan Clash Cup",
+        startTime: Number(eventConfig.startTime) || 0,
+        endTime: Number(eventConfig.endTime) || 0,
+      },
+      snapshots: [],
+      updatedAt: ts,
+    };
+    record.event = {
+      ...record.event,
+      name: eventConfig.name ?? record.event.name,
+      endTime: Number(eventConfig.endTime) || record.event.endTime,
+    };
+    const snapshot = {
+      ts,
+      clans: standings.map(clan => ({
+        id: clan.id,
+        tag: clan.tag,
+        name: clan.name,
+        score: clan.score,
+        rank: clan.rank ?? null,
+        members: (clan.rows ?? []).map(member => ({
+          userId: member.userId,
+          name: member.name,
+          delta: member.delta,
+        })),
+      })),
+    };
+    const previous = record.snapshots[record.snapshots.length - 1];
+    if (previous && JSON.stringify(previous.clans) === JSON.stringify(snapshot.clans)) {
+      return false;
+    }
+    record.snapshots.push(snapshot);
+    if (record.snapshots.length > MAX_SNAPSHOTS) {
+      record.snapshots.splice(0, record.snapshots.length - MAX_SNAPSHOTS);
+    }
+    record.updatedAt = ts;
+    this.data.events[id] = record;
+    this.pruneEvents();
+    this.persist();
+    return true;
+  }
+
+  pruneEvents() {
+    const ordered = Object.entries(this.data.events)
+      .sort(([, a], [, b]) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    for (const [id] of ordered.slice(MAX_EVENTS)) delete this.data.events[id];
+  }
+
+  snapshots(eventId) {
+    return this.data.events[String(eventId)]?.snapshots ?? [];
+  }
+
+  list() {
+    return Object.values(this.data.events)
+      .map(record => ({
+        ...record.event,
+        snapshotCount: record.snapshots.length,
+        firstAt: record.snapshots[0]?.ts ?? null,
+        lastAt: record.snapshots[record.snapshots.length - 1]?.ts ?? null,
+      }))
+      .sort((a, b) => b.startTime - a.startTime);
+  }
+
+  replay(eventId, index = -1) {
+    const record = this.data.events[String(eventId)];
+    if (!record?.snapshots.length) return null;
+    const safeIndex = index < 0
+      ? record.snapshots.length - 1
+      : Math.min(Math.max(0, Number(index) || 0), record.snapshots.length - 1);
+    return {
+      event: { ...record.event },
+      snapshot: record.snapshots[safeIndex],
+      index: safeIndex,
+      total: record.snapshots.length,
+    };
+  }
+
+  clear(eventId = null) {
+    if (eventId == null) this.data = blankData();
+    else delete this.data.events[String(eventId)];
+    this.persist();
+  }
+
+  momentum(eventId, clanId, windowMs = WINDOW_MS) {
+    const snapshots = this.snapshots(eventId);
+    if (snapshots.length < 2) return null;
+    const now = snapshots[snapshots.length - 1];
+    const cutoff = now.ts - windowMs;
+    const past = snapshots.find(snapshot => snapshot.ts >= cutoff);
+    if (!past || past === now) return null;
+    const pastClan = past.clans.find(clan => clan.id === clanId);
+    const nowClan = now.clans.find(clan => clan.id === clanId);
+    if (!pastClan || !nowClan) return null;
+    return { gained: nowClan.score - pastClan.score, spanMs: now.ts - past.ts };
+  }
+
+  rankChanges(eventId) {
+    const snapshots = this.snapshots(eventId);
+    if (snapshots.length < 2) return [];
+    const prev = snapshots[snapshots.length - 2];
+    const curr = snapshots[snapshots.length - 1];
+    return curr.clans.flatMap(clan => {
+      const previous = prev.clans.find(candidate => candidate.id === clan.id);
+      if (clan.rank == null || previous?.rank == null || previous.rank === clan.rank) return [];
+      return [{
+        kind: "rank",
+        tag: clan.tag,
+        oldRank: previous.rank,
+        newRank: clan.rank,
+        direction: clan.rank < previous.rank ? "up" : "down",
+        ts: curr.ts,
+      }];
+    }).sort((a, b) =>
+      Math.abs(b.newRank - b.oldRank) - Math.abs(a.newRank - a.oldRank));
+  }
+
+  bigGains(eventId, threshold = 40) {
+    const snapshots = this.snapshots(eventId);
+    if (snapshots.length < 2) return [];
+    const prev = snapshots[snapshots.length - 2];
+    const curr = snapshots[snapshots.length - 1];
+    const out = [];
+    for (const clan of curr.clans) {
+      const previousClan = prev.clans.find(candidate => candidate.id === clan.id);
+      if (!previousClan) continue;
+      for (const member of clan.members) {
+        const previous = previousClan.members.find(candidate =>
+          candidate.userId === member.userId);
+        if (member.delta == null || previous?.delta == null) continue;
+        const gain = member.delta - previous.delta;
+        if (gain >= threshold) {
+          out.push({
+            kind: "gain",
+            clanTag: clan.tag,
+            name: member.name,
+            gain,
+            ts: curr.ts,
+          });
+        }
+      }
+    }
+    return out.sort((a, b) => b.gain - a.gain);
+  }
+
+  span(eventId) {
+    const snapshots = this.snapshots(eventId);
+    if (snapshots.length < 2) return 0;
+    return snapshots[snapshots.length - 1].ts - snapshots[0].ts;
+  }
+
+  project(eventId, clanId, targetTime, { eventStartTime } = {}) {
+    if (!eventStartTime) return null;
+    const snapshots = this.snapshots(eventId);
+    const now = snapshots[snapshots.length - 1];
+    if (!now) return null;
+    const clan = now.clans.find(candidate => candidate.id === clanId);
+    if (!clan) return null;
+    const elapsedMs = now.ts - eventStartTime;
+    const remainingMs = targetTime - now.ts;
+    if (elapsedMs < 30 * 60_000 || remainingMs <= 0 || clan.score <= 0) return null;
+    const ratePerMs = clan.score / elapsedMs;
+    return {
+      projected: Math.round(clan.score + ratePerMs * remainingMs),
+      ratePerHour: Math.round(ratePerMs * 3_600_000),
+    };
   }
 }
 
-function persistSnapshots() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshots));
-  } catch { /* quota / private mode — momentum falls back to in-memory only */ }
-}
+let defaultStore = null;
+const store = () => defaultStore ??= new EventHistoryStore();
 
-// Persist a slim projection of the standings — enough to reconstruct
-// score-over-time and rank-flip events without holding the full members
-// array. Called once per successful clans snapshot from app.js.
-export function recordSnapshot(standings, ts = Date.now()) {
-  snapshots.push({
-    ts,
-    clans: standings.map(c => ({
-      id: c.id,
-      tag: c.tag,
-      score: c.score,
-      rank: c.rank ?? null,
-      members: (c.rows ?? []).map(r => ({
-        userId: r.userId,
-        name: r.name,
-        delta: r.delta,
-      })),
-    })),
-  });
-  prune();
-  persistSnapshots();
-}
-
-function prune() {
-  const cutoff = Date.now() - WINDOW_MS;
-  while (snapshots.length && snapshots[0].ts < cutoff) snapshots.shift();
-}
-
-const latest = () => snapshots[snapshots.length - 1] ?? null;
-const oldestInWindow = windowMs => {
-  const cutoff = Date.now() - windowMs;
-  return snapshots.find(s => s.ts >= cutoff) ?? null;
-};
-
-// Points gained by a clan over the last windowMs. Returns null when we
-// don't have enough history yet or the clan wasn't present in the window.
-export function clanMomentum(clanId, windowMs = WINDOW_MS) {
-  if (snapshots.length < 2) return null;
-  const past = oldestInWindow(windowMs);
-  const now = latest();
-  if (!past || past === now) return null;
-  const pastClan = past.clans.find(c => c.id === clanId);
-  const nowClan = now.clans.find(c => c.id === clanId);
-  if (!pastClan || !nowClan) return null;
-  return {
-    gained: nowClan.score - pastClan.score,
-    spanMs: now.ts - past.ts,
-  };
-}
-
-// Every rank flip that happened between the two most recent snapshots.
-// Returns events sorted by direction+size so the ticker leads with movement.
-export function detectRankChanges() {
-  if (snapshots.length < 2) return [];
-  const prev = snapshots[snapshots.length - 2];
-  const curr = snapshots[snapshots.length - 1];
-  const out = [];
-  curr.clans.forEach(c => {
-    if (c.rank == null) return;
-    const p = prev.clans.find(x => x.id === c.id);
-    if (!p || p.rank == null || p.rank === c.rank) return;
-    out.push({
-      kind: "rank",
-      tag: c.tag,
-      oldRank: p.rank,
-      newRank: c.rank,
-      direction: c.rank < p.rank ? "up" : "down",
-      ts: curr.ts,
-    });
-  });
-  return out.sort((a, b) => Math.abs(b.newRank - b.oldRank) - Math.abs(a.newRank - a.oldRank));
-}
-
-// Members whose delta jumped by at least `threshold` between the two most
-// recent snapshots. Used to seed "Croxyyys +180 for FURY" ticker entries.
-export function detectBigGains(threshold = 40) {
-  if (snapshots.length < 2) return [];
-  const prev = snapshots[snapshots.length - 2];
-  const curr = snapshots[snapshots.length - 1];
-  const out = [];
-  curr.clans.forEach(c => {
-    const p = prev.clans.find(x => x.id === c.id);
-    if (!p) return;
-    c.members.forEach(m => {
-      if (m.delta == null || m.userId == null) return;
-      const pm = p.members.find(x => x.userId === m.userId);
-      if (!pm || pm.delta == null) return;
-      const jump = m.delta - pm.delta;
-      if (jump >= threshold) {
-        out.push({ kind: "gain", clanTag: c.tag, name: m.name, gain: jump, ts: curr.ts });
-      }
-    });
-  });
-  return out.sort((a, b) => b.gain - a.gain);
-}
-
-// Extrapolate the given clan's score to `targetTime` using their
-// session-average gain rate (total score / time since event start),
-// NOT the recent-window rate — a single lost match at the tail of a
-// long grinding session shouldn't drag the projection to absurd
-// negatives. This matches what "at this pace" means conversationally:
-// the pace they've held all event.
-//
-// Returns null when the projection would be misleading — event too
-// fresh, already ended, or the clan is net-negative so far (no
-// meaningful "pace" to extrapolate).
-export function projectScore(clanId, targetTime, opts = {}) {
-  const eventStartTime = opts.eventStartTime;
-  if (!eventStartTime) return null;
-  const now = latest();
-  if (!now) return null;
-  const clan = now.clans.find(c => c.id === clanId);
-  if (!clan) return null;
-  const elapsedMs = now.ts - eventStartTime;
-  const remainingMs = targetTime - now.ts;
-  if (elapsedMs < 30 * 60_000) return null;   // event too fresh — noisy
-  if (remainingMs <= 0) return null;           // already ended
-  if (clan.score <= 0) return null;            // don't project down from zero
-  const ratePerMs = clan.score / elapsedMs;
-  return {
-    projected: Math.round(clan.score + ratePerMs * remainingMs),
-    ratePerHour: Math.round(ratePerMs * 3_600_000),
-  };
-}
-
-// How much history we've accumulated — used to decide whether momentum
-// numbers are reliable enough to display prominently.
-export const historySpanMs = () => {
-  if (snapshots.length < 2) return 0;
-  return snapshots[snapshots.length - 1].ts - snapshots[0].ts;
-};
-
-// Test-friendly hook so demo mode can seed a plausible history without
-// waiting real time — used when Firestore is unreachable.
-export function _seedForDemo(entries) {
-  snapshots.length = 0;
-  entries.forEach(e => snapshots.push(e));
-}
+export const recordSnapshot = (eventConfig, standings, ts) =>
+  store().record(eventConfig, standings, ts);
+export const clanMomentum = (eventId, clanId, windowMs) =>
+  store().momentum(eventId, clanId, windowMs);
+export const detectRankChanges = eventId => store().rankChanges(eventId);
+export const detectBigGains = (eventId, threshold) =>
+  store().bigGains(eventId, threshold);
+export const projectScore = (eventId, clanId, targetTime, opts) =>
+  store().project(eventId, clanId, targetTime, opts);
+export const historySpanMs = eventId => store().span(eventId);
+export const listEventArchives = () => store().list();
+export const eventReplay = (eventId, index) => store().replay(eventId, index);
+export const clearEventHistory = eventId => store().clear(eventId);
+export const historyError = () => store().error;

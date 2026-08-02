@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [html, css, config] = await Promise.all([
+const [html, css, config, app] = await Promise.all([
   readFile(new URL("../index.html", import.meta.url), "utf8"),
   readFile(new URL("../css/clash.css", import.meta.url), "utf8"),
   readFile(new URL("../js/config.js", import.meta.url), "utf8"),
+  readFile(new URL("../js/app.js", import.meta.url), "utf8"),
 ]);
 
 test("admin controls stay hidden until an approved account signs in", () => {
@@ -37,7 +38,8 @@ test("admin form has search, confirmation, message, and error controls", () => {
 test("live disbanding requires a clear yes or no choice", () => {
   assert.match(config, /disbandEnabled:\s*true/);
   assert.match(config, /noticeType:\s*"kicked"/);
-  assert.match(config, /reservationCleanupEnabled:\s*false/);
+  assert.match(config, /reservationCleanupEmergencyDisabled:\s*false/);
+  assert.match(app, /useClanReservations/);
   assert.match(html, /id="adminDisbandWarning"/);
   assert.match(html, />No<\/button>/);
   assert.match(html, />Yes, disband<\/button>/);

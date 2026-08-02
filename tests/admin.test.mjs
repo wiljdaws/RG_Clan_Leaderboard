@@ -7,16 +7,52 @@ import {
   disbandWarning,
   duplicateClanIds,
   formatEventTimeLeft,
+  knownDeviceIds,
   normalizeClanName,
   normalizeClanTag,
+  reservationCleanupEnabled,
 } from "../js/admin.js";
 
 test("clan names and tags use one stable format", async () => {
   assert.equal(normalizeClanName("  Alpha   Omega "), "alpha omega");
   assert.equal(normalizeClanTag(" king "), "KING");
+  assert.equal(normalizeClanTag("[k1-ng!]"), "KNG");
   assert.equal(
     await clanNameKey("Alpha Omega"),
     await clanNameKey(" alpha   omega "),
+  );
+});
+
+test("reservation cleanup follows the live event and emergency switch", () => {
+  assert.equal(reservationCleanupEnabled({ useClanReservations: true }), true);
+  assert.equal(reservationCleanupEnabled({ useClanReservations: false }), false);
+  assert.equal(reservationCleanupEnabled(
+    { useClanReservations: true },
+    { reservationCleanupEmergencyDisabled: true },
+  ), false);
+});
+
+test("device cleanup covers member maps, stats, and directory records", () => {
+  const clan = {
+    deviceIds: ["clan-device"],
+    members: {
+      a: { deviceId: "member-device", deviceIds: ["shared-device"] },
+    },
+    memberStats: {
+      a: { deviceIds: ["stats-device", "shared-device"] },
+      orphan: { deviceId: "orphan-device" },
+    },
+  };
+  assert.deepEqual(
+    knownDeviceIds(clan, { deviceIds: ["directory-device"] }).sort(),
+    [
+      "clan-device",
+      "directory-device",
+      "member-device",
+      "orphan-device",
+      "shared-device",
+      "stats-device",
+    ],
   );
 });
 

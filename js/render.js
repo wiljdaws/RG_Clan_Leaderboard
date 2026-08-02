@@ -3,6 +3,11 @@
 import { eventPhase } from "./scoring.js";
 
 const $ = id => document.getElementById(id);
+let nowProvider = () => Date.now();
+const nowMs = () => nowProvider();
+export function setNowProvider(provider) {
+  if (typeof provider === "function") nowProvider = provider;
+}
 const fmt = n => (n > 0 ? "+" : "") + Math.round(n).toLocaleString();
 const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -31,14 +36,14 @@ const HOT_MS = 5 * 60_000;
 const WARM_MS = 60 * 60_000;
 export const syncClass = syncedAt => {
   if (syncedAt == null) return "sync-none";
-  const age = Date.now() - syncedAt;
+  const age = nowMs() - syncedAt;
   if (age < HOT_MS) return "sync-hot";
   if (age < WARM_MS) return "sync-warm";
   return "sync-cold";
 };
 export const fmtSyncAgo = syncedAt => {
   if (syncedAt == null) return "Never synced this event";
-  const s = Math.max(0, Math.floor((Date.now() - syncedAt) / 1000));
+  const s = Math.max(0, Math.floor((nowMs() - syncedAt) / 1000));
   if (s < 60) return `Synced ${s}s ago`;
   const m = Math.floor(s / 60);
   if (m < 60) return `Synced ${m}m ago`;
@@ -52,7 +57,7 @@ const crest = (clan, cls, extra = "") =>
 
 export function renderHeaderStats(clans, waiting = 0) {
   const players = clans.reduce((s, c) => s + c.members.length, 0);
-  const now = Date.now();
+  const now = nowMs();
   const grinding = clans.reduce((s, c) =>
     s + c.rows.filter(r => r.syncedAt && (now - r.syncedAt) < HOT_MS).length, 0);
   const parts = [
@@ -60,9 +65,64 @@ export function renderHeaderStats(clans, waiting = 0) {
     `<b>${players}</b> players`,
   ];
   if (grinding > 0) parts.push(`<b class="grinding"><span class="live-dot"></span>${grinding}</b> grinding now`);
-  if (waiting > 0) parts.push(`<b>${waiting}</b> waiting to sync`);
+  if (waiting > 0) parts.push(`<b>${waiting}</b> player${waiting === 1 ? "" : "s"} waiting to sync`);
   parts.push("scores sync live from ATLAS");
   $("subLine").innerHTML = parts.join(" · ");
+}
+
+const DATA_STATE_COPY = {
+  loading: {
+    title: "Loading live standings",
+    detail: "Waiting for the event and clan roster.",
+  },
+  live: {
+    title: "Live",
+    detail: "Firestore snapshots are connected.",
+  },
+  degraded: {
+    title: "Connection limited",
+    detail: "Showing the latest available data while live sync recovers.",
+  },
+  demo: {
+    title: "Demo data",
+    detail: "Sample standings are shown. No live scores are being used.",
+  },
+};
+
+export function dataStateCopy(mode, detail = "") {
+  const copy = DATA_STATE_COPY[mode] ?? DATA_STATE_COPY.degraded;
+  return { ...copy, detail: detail || copy.detail };
+}
+
+export function renderDataState(mode, detail = "") {
+  const element = $("dataState");
+  if (!element) return;
+  const copy = dataStateCopy(mode, detail);
+  element.dataset.mode = mode;
+  element.innerHTML = `<strong>${esc(copy.title)}</strong><span>${esc(copy.detail)}</span>`;
+  element.hidden = false;
+}
+
+export function renderWaitingRoster(roster) {
+  const host = $("waitingRoster");
+  if (!host) return;
+  const groups = Array.isArray(roster) ? roster : [];
+  if (!groups.length) {
+    host.hidden = true;
+    host.replaceChildren();
+    return;
+  }
+  const count = groups.reduce((sum, group) => sum + group.members.length, 0);
+  host.innerHTML = `
+    <div class="waiting-copy">
+      <span class="waiting-kicker">Waiting to sync</span>
+      <strong>${count} player${count === 1 ? "" : "s"} still need an event baseline</strong>
+      <span>They join the live score after their next ATLAS sync.</span>
+    </div>
+    <div class="waiting-groups">
+      ${groups.map(group => `<span><b>${esc(group.clanTag)}</b> ${group.members.map(member => esc(member.name)).join(", ")}</span>`).join("")}
+    </div>`;
+  host.hidden = false;
 }
 
 // Format "N / max" when maxMembers is known, else fall back to "N members".
@@ -95,7 +155,7 @@ export function renderPodium(clans, ctx = {}) {
   const order = [clans[1], clans[0], clans[2]].filter(Boolean);
   const cls = c => c === clans[0] ? "p1" : c === clans[1] ? "p2" : "p3";
   const label = c => c === clans[0] ? "Champion Seat" : c === clans[1] ? "2nd" : "3rd";
-  const isActive = c => c.rows.some(r => r.syncedAt && (Date.now() - r.syncedAt) < HOT_MS);
+  const isActive = c => c.rows.some(r => r.syncedAt && (nowMs() - r.syncedAt) < HOT_MS);
   const projection = ctx.winnerProjection;
   const projectionTarget = ctx.winnerProjectionTarget ?? ctx.endTime;
   const projectionLine = projection && projectionTarget
@@ -132,6 +192,7 @@ let compareHandler = null;
 export function onCompareToggle(fn) { compareHandler = fn; }
 let compareShotHandler = null;
 export function onCompareScreenshot(fn) { compareShotHandler = fn; }
+let compareReturnFocus = null;
 
 // Broadcast-style live feed: rank flips and big gains. Newest on the
 // left; capped so the DOM stays cheap. Older events fade based on age.
@@ -139,12 +200,12 @@ const TICKER_MAX = 12;
 const tickerFeed = [];
 export function pushTickerEvents(events) {
   if (!events.length) return;
-  events.forEach(e => tickerFeed.unshift({ ...e, addedAt: Date.now() }));
+  events.forEach(e => tickerFeed.unshift({ ...e, addedAt: nowMs() }));
   if (tickerFeed.length > TICKER_MAX) tickerFeed.length = TICKER_MAX;
   renderTicker();
 }
 function tickerHTML(e) {
-  const age = Math.max(0, Math.floor((Date.now() - e.addedAt) / 60_000));
+  const age = Math.max(0, Math.floor((nowMs() - e.addedAt) / 60_000));
   const ago = age === 0 ? "just now" : `${age}m ago`;
   if (e.kind === "rank") {
     const arrow = e.direction === "up" ? "↑" : "↓";
@@ -170,12 +231,15 @@ function renderTicker() {
   strip.innerHTML = tickerFeed.map(tickerHTML).join("");
 }
 // Re-render every 30s so the "Xm ago" timestamps and fade opacity stay honest.
-setInterval(() => { if (tickerFeed.length) renderTicker(); }, 30_000);
+const tickerInterval = setInterval(() => {
+  if (tickerFeed.length) renderTicker();
+}, 30_000);
+tickerInterval.unref?.();
 
 // Repaint freshness classes on all visible avatars every 30s so a player
 // synced 4m30s ago transitions to "warm" without waiting for a snapshot.
 // The dot color and tooltip stay honest even on an idle tab.
-setInterval(() => {
+const freshnessInterval = setInterval(() => {
   document.querySelectorAll(".ava[data-synced-at]").forEach(el => {
     const raw = el.dataset.syncedAt;
     const at = raw ? Number(raw) : null;
@@ -190,11 +254,37 @@ setInterval(() => {
     const hot = [...clanEl.querySelectorAll(".ava[data-synced-at]")]
       .some(a => {
         const at = Number(a.dataset.syncedAt);
-        return at && (Date.now() - at) < HOT_MS;
+        return at && (nowMs() - at) < HOT_MS;
       });
     el.classList.toggle("active", hot);
   });
 }, 30_000);
+freshnessInterval.unref?.();
+
+export function standingsEmptyCopy(reason) {
+  if (reason === "filter") {
+    return {
+      title: "No clans match",
+      detail: "Try a different search — matches on tag or full name.",
+    };
+  }
+  if (reason === "event") {
+    return {
+      title: "Event details unavailable",
+      detail: "Scores are paused until the live event document returns.",
+    };
+  }
+  if (reason === "error") {
+    return {
+      title: "Standings unavailable",
+      detail: "Live data could not be loaded. The page will retry when it is visible.",
+    };
+  }
+  return {
+    title: "No clans scored yet",
+    detail: "Baselines lock the first time each member syncs during the event window.",
+  };
+}
 
 export function renderStandings(clans, ctx = {}) {
   const host = $("standings");
@@ -207,11 +297,8 @@ export function renderStandings(clans, ctx = {}) {
   });
 
   if (!clans.length) {
-    host.innerHTML = ctx.emptyReason === "filter"
-      ? `<div class="state"><div class="big">No clans match</div>
-         Try a different search — matches on tag or full name.</div>`
-      : `<div class="state"><div class="big">No clans scored yet</div>
-         Baselines lock the first time each member syncs during the event window.</div>`;
+    const copy = standingsEmptyCopy(ctx.emptyReason);
+    host.innerHTML = `<div class="state"><div class="big">${esc(copy.title)}</div>${esc(copy.detail)}</div>`;
     return;
   }
   const pinned = ctx.pinned instanceof Set ? ctx.pinned : new Set();
@@ -252,7 +339,7 @@ export function renderStandings(clans, ctx = {}) {
         <td class="num">${deltaCell}</td>
       </tr>`;
     }).join("");
-    const clanIsActive = clan.rows.some(r => r.syncedAt && (Date.now() - r.syncedAt) < HOT_MS);
+    const clanIsActive = clan.rows.some(r => r.syncedAt && (nowMs() - r.syncedAt) < HOT_MS);
 
     const hasNoBase = clan.rows.some(r => r.delta == null);
     const memberPanelId = `members-${clan.id ?? idx}`;
@@ -389,15 +476,99 @@ export function renderCompare(a, b, ctx = {}) {
       ${side(b)}
     </div>
   `;
+  compareReturnFocus = document.activeElement;
   modal.hidden = false;
   card.querySelectorAll("[data-close]").forEach(x => x.addEventListener("click", closeCompare));
   card.querySelectorAll("[data-shot]").forEach(x => x.addEventListener("click", () => compareShotHandler?.(a, b)));
   modal.querySelector(".modal-scrim").addEventListener("click", closeCompare);
+  requestAnimationFrame(() => card.querySelector("[data-close]")?.focus());
 }
-export function closeCompare() { $("compareModal").hidden = true; }
+export function closeCompare() {
+  $("compareModal").hidden = true;
+  if (compareReturnFocus?.isConnected) compareReturnFocus.focus();
+  compareReturnFocus = null;
+}
+
+let archiveSelectHandler = null;
+let archiveReplayHandler = null;
+let archiveClearHandler = null;
+export function onArchiveSelect(fn) { archiveSelectHandler = fn; }
+export function onArchiveReplay(fn) { archiveReplayHandler = fn; }
+export function onArchiveClear(fn) { archiveClearHandler = fn; }
+
+const fmtArchiveTime = value => new Date(value).toLocaleString([], {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+export function renderArchive(archives, replay, ctx = {}) {
+  const host = $("archiveContent");
+  if (!host) return;
+  if (ctx.error && !archives.length) {
+    host.innerHTML = `<div class="state"><div class="big">History unavailable</div>${esc(ctx.error)}</div>`;
+    return;
+  }
+  if (!archives.length) {
+    host.innerHTML = `<div class="state"><div class="big">No local history yet</div>
+      Live snapshots for each event stay only in this browser.</div>`;
+    return;
+  }
+
+  const selectedId = replay?.event?.id ?? archives[0].id;
+  const selected = archives.find(event => event.id === selectedId) ?? archives[0];
+  const snapshot = replay?.snapshot ?? null;
+  const total = replay?.total ?? 0;
+  const index = replay?.index ?? 0;
+  const replayRows = (snapshot?.clans ?? [])
+    .slice()
+    .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity))
+    .map(clan => `
+      <article class="archive-clan">
+        <span class="rank">#${clan.rank ?? "–"}</span>
+        <span class="archive-clan-name"><b>${esc(clan.tag)}</b><small>${esc(clan.name ?? "")}</small></span>
+        <strong class="${clan.score < 0 ? "neg" : ""}">${fmt(clan.score)}</strong>
+      </article>`).join("");
+
+  host.innerHTML = `
+    <div class="archive-toolbar">
+      <label for="archiveEventSelect">Saved event</label>
+      <select id="archiveEventSelect">
+        ${archives.map(event => `<option value="${esc(event.id)}" ${event.id === selected.id ? "selected" : ""}>${esc(event.name)} · ${new Date(event.startTime).toLocaleDateString()}</option>`).join("")}
+      </select>
+      <button class="archive-clear" id="clearHistoryBtn" type="button">Clear this event</button>
+    </div>
+    ${ctx.error ? `<p class="archive-note">${esc(ctx.error)} In-memory replay is still available.</p>` : ""}
+    ${ctx.offline ? `<p class="archive-note">Offline — saved replay is still available.</p>` : ""}
+    ${snapshot ? `
+      <div class="replay-head">
+        <div>
+          <span class="archive-kicker">Local replay</span>
+          <strong>${esc(selected.name)}</strong>
+          <span>${fmtArchiveTime(snapshot.ts)}</span>
+        </div>
+        <output for="replayRange">${index + 1} / ${total}</output>
+      </div>
+      <label class="replay-range" for="replayRange">
+        <span>Earlier</span>
+        <input id="replayRange" type="range" min="0" max="${Math.max(0, total - 1)}" value="${index}" ${total < 2 ? "disabled" : ""}>
+        <span>Latest</span>
+      </label>
+      <div class="archive-list">${replayRows || `<div class="state">No standings were saved in this snapshot.</div>`}</div>
+    ` : `<div class="state"><div class="big">Replay is empty</div>No snapshots were saved for this event.</div>`}`;
+
+  $("archiveEventSelect")?.addEventListener("change", event =>
+    archiveSelectHandler?.(event.target.value));
+  $("replayRange")?.addEventListener("input", event =>
+    archiveReplayHandler?.(Number(event.target.value)));
+  $("clearHistoryBtn")?.addEventListener("click", () =>
+    archiveClearHandler?.(selected.id));
+}
 
 // Full-screen event-end celebration. Fires canvas-confetti on open,
 // stops after ~3s so the CPU can idle. Dismiss button removes the overlay.
+let revealReturnFocus = null;
 export async function showEventEndReveal(standings) {
   if (!standings.length) return;
   const [winner, second, third] = standings;
@@ -408,23 +579,33 @@ export async function showEventEndReveal(standings) {
     <li class="p${i + 2}"><b>#${i + 2}</b> ${esc(c.tag)} <small>${fmt(c.score)}</small></li>`).join("");
   $("revealPodium").innerHTML = others;
   const overlay = $("endReveal");
+  revealReturnFocus = document.activeElement;
   overlay.hidden = false;
-  try {
-    const confetti = (await import("https://esm.sh/canvas-confetti@1.9.3")).default;
-    const canvas = $("revealConfetti");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const fire = confetti.create(canvas, { resize: true, useWorker: true });
-    const end = Date.now() + 2600;
-    (function frame() {
-      fire({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 },
-             colors: ["#A855F7", "#E44BE0", "#FFD24A"] });
-      fire({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 },
-             colors: ["#A855F7", "#E44BE0", "#FFD24A"] });
-      if (Date.now() < end) requestAnimationFrame(frame);
-    })();
-  } catch (e) { console.warn("[ClashCup] confetti unavailable:", e.message); }
-  $("revealDismiss").onclick = () => { overlay.hidden = true; };
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (!reducedMotion) {
+    try {
+      const confetti = (await import("https://esm.sh/canvas-confetti@1.9.3")).default;
+      const canvas = $("revealConfetti");
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const fire = confetti.create(canvas, { resize: true, useWorker: true });
+      const end = nowMs() + 2600;
+      (function frame() {
+        fire({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 },
+               colors: ["#A855F7", "#E44BE0", "#FFD24A"] });
+        fire({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 },
+               colors: ["#A855F7", "#E44BE0", "#FFD24A"] });
+        if (nowMs() < end) requestAnimationFrame(frame);
+      })();
+    } catch (e) { console.warn("[ClashCup] confetti unavailable:", e.message); }
+  }
+  const dismiss = $("revealDismiss");
+  dismiss.onclick = () => {
+    overlay.hidden = true;
+    if (revealReturnFocus?.isConnected) revealReturnFocus.focus();
+    revealReturnFocus = null;
+  };
+  requestAnimationFrame(() => dismiss.focus());
 }
 
 // Top individual contributors across all clans, sorted by delta desc.
@@ -432,9 +613,14 @@ export async function showEventEndReveal(standings) {
 export function renderPlayers(players, ctx = {}) {
   const host = $("playersList");
   if (!players.length) {
-    host.innerHTML = ctx.emptyReason === "filter"
-      ? `<div class="state"><div class="big">No players match</div>Try a different name.</div>`
-      : `<div class="state"><div class="big">No contributions yet</div>Baselines lock on first ATLAS sync inside the event window.</div>`;
+    const copy = ctx.emptyReason === "filter"
+      ? ["No players match", "Try a different name."]
+      : ctx.emptyReason === "event"
+        ? ["Event details unavailable", "Player scores resume when the live event document returns."]
+        : ctx.emptyReason === "error"
+          ? ["Players unavailable", "Live data could not be loaded."]
+          : ["No contributions yet", "Baselines lock on first ATLAS sync inside the event window."];
+    host.innerHTML = `<div class="state"><div class="big">${copy[0]}</div>${copy[1]}</div>`;
     return;
   }
   host.innerHTML = players.map((p, i) => {
@@ -479,13 +665,13 @@ export function renderPhase(eventConfig) {
   if (!eventConfig) { applyPhase("none"); cChip.style.display = "none"; return; }
 
   const draw = () => {
-    const phase = eventPhase(eventConfig);
+    const phase = eventPhase(eventConfig, nowMs());
     applyPhase(phase);
     if (phase !== "active" && phase !== "upcoming") { cChip.style.display = "none"; return; }
     cChip.style.display = "";
     const target = phase === "active" ? eventConfig.endTime : eventConfig.startTime;
     const suffix = phase === "active" ? " left" : " to start";
-    let ms = Math.max(0, target - Date.now());
+    let ms = Math.max(0, target - nowMs());
     const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5),
           m = Math.floor(ms % 36e5 / 6e4), s = Math.floor(ms % 6e4 / 1e3);
     cd.textContent = (d ? `${d}d ${pad2(h)}h ${pad2(m)}m` : `${pad2(h)}:${pad2(m)}:${pad2(s)}`) + suffix;
@@ -496,7 +682,9 @@ export function renderPhase(eventConfig) {
 
 export function setEventTitle(name) { $("eventTitle").textContent = name; }
 export function setSyncLine(html) { $("syncLine").innerHTML = html; }
-export function showDemoBanner() { $("demoBanner").style.display = "block"; }
+export function showDemoBanner() {
+  renderDataState("demo");
+}
 
 // Live "updated Xs ago" chip. Ticks every second; goes amber past 60s
 // so a silent listener doesn't look fresh forever.
@@ -510,12 +698,12 @@ const fmtAgo = ms => {
   const h = Math.floor(m / 60);
   return `${h}h ago`;
 };
-export function markSynced(now = Date.now()) {
+export function markSynced(now = nowMs()) {
   lastSyncAt = now;
   const chip = $("syncBadge"), txt = $("syncBadgeText");
   chip.style.display = "";
   const draw = () => {
-    const age = Date.now() - lastSyncAt;
+    const age = nowMs() - lastSyncAt;
     txt.textContent = `Updated ${fmtAgo(age)}`;
     chip.classList.toggle("stale", age > 60_000);
   };

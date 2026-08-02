@@ -49,19 +49,25 @@
     <p class="sub" id="subLine">–</p>
   </header>
 
-  <div class="banner" id="demoBanner">Demo data — Firestore unreachable from this preview. Open on GitHub Pages or locally for live standings.</div>
+  <section class="data-state" id="dataState" data-mode="loading" role="status" aria-live="polite">
+    <strong>Loading live standings</strong>
+    <span>Waiting for the event and clan roster.</span>
+  </section>
 
   <section class="ticker" id="ticker" aria-label="Live event feed" style="display:none">
     <span class="ticker-label">LIVE</span>
     <div class="ticker-strip" id="tickerStrip"></div>
   </section>
 
+  <section class="waiting-roster" id="waitingRoster" aria-label="Players waiting to sync" hidden></section>
+
   <section class="podium" id="podium" style="display:none"></section>
 
   <div class="controls" id="controls">
-    <div class="tabs" role="tablist">
-      <button class="tab active" data-tab="clans" role="tab" aria-selected="true">Clans</button>
-      <button class="tab" data-tab="players" role="tab" aria-selected="false">Top Players</button>
+    <div class="tabs" role="tablist" aria-label="Standings views">
+      <button class="tab active" data-tab="clans" role="tab" aria-selected="true" aria-controls="clansBoard" tabindex="0">Clans</button>
+      <button class="tab" data-tab="players" role="tab" aria-selected="false" aria-controls="playersBoard" tabindex="-1">Top Players</button>
+      <button class="tab" data-tab="archive" role="tab" aria-selected="false" aria-controls="archiveBoard" tabindex="-1">Archive</button>
     </div>
     <input type="search" id="filterInput" placeholder="Search clan or player…" aria-label="Filter">
     <select id="sortSelect" aria-label="Sort" data-view="clans">
@@ -91,7 +97,7 @@
       </div>
       <input id="adminClanSearch" type="search" placeholder="Search clans or players" aria-label="Search admin clan list">
     </div>
-    <div class="admin-lock-note">Every disband asks for confirmation and can include a message.</div>
+    <div class="admin-lock-note" id="adminCleanupNote">Disbanding is locked until reservation cleanup is enabled for the live event.</div>
     <div class="admin-clan-list" id="adminClanList">
       <p class="admin-empty">Loading clans...</p>
     </div>
@@ -103,7 +109,7 @@
     <div class="modal-card" id="compareCard"></div>
   </div>
 
-  <div class="modal" id="adminDisbandModal" role="dialog" aria-modal="true" aria-labelledby="adminDisbandTitle" hidden>
+  <div class="modal" id="adminDisbandModal" role="dialog" aria-modal="true" aria-labelledby="adminDisbandTitle" aria-describedby="adminDisbandWarning" hidden>
     <div class="modal-scrim" data-close></div>
     <div class="modal-card admin-disband-card">
       <span class="admin-kicker">Admin action</span>
@@ -112,7 +118,7 @@
       <p>This removes the clan and tells every current member the next time ATLAS loads.</p>
       <label for="adminDisbandMessage">Message (optional)</label>
       <textarea id="adminDisbandMessage" maxlength="300" rows="4" placeholder="Why is this clan being removed?"></textarea>
-      <p class="admin-error" id="adminDisbandError" role="alert"></p>
+      <p class="admin-error" id="adminDisbandError" role="alert" aria-live="assertive"></p>
       <div class="admin-disband-actions">
         <button id="adminDisbandCancel" class="admin-secondary" type="button">No</button>
         <button id="adminDisbandConfirm" class="admin-danger" type="button">Yes, disband</button>
@@ -153,6 +159,17 @@
       <span>Rank</span><span>Player</span><span class="num">Contribution</span><span class="num">MMR</span>
     </div>
     <div id="playersList"></div>
+  </section>
+
+  <section class="board archive-board" aria-label="Event archive and replay" id="archiveBoard" style="display:none">
+    <div class="archive-heading">
+      <div>
+        <span class="archive-kicker">This browser only</span>
+        <h2>Event archive</h2>
+      </div>
+      <p>Replay the small score snapshots saved on this device.</p>
+    </div>
+    <div id="archiveContent"></div>
   </section>
 
   <footer>

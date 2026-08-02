@@ -4,20 +4,26 @@ import {
   COLLECTIONS,
   SDK,
 } from "./config.js";
+import { clanMembers } from "./members.js";
 
 let adminClans = [];
 let adminReady = false;
 let isAdmin = false;
 let selectedClan = null;
 let firebase = null;
-let eventEndTime = 0;
+let adminEvent = null;
+let adminNow = () => Date.now();
+let previousFocus = null;
 
 export function normalizeClanName(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 export function normalizeClanTag(value) {
-  return String(value ?? "").trim().toUpperCase();
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 4);
 }
 
 export async function clanNameKey(name) {
@@ -76,16 +82,45 @@ export function disbandWarning(endTime, now = Date.now()) {
     : "Do you want to disband this clan?";
 }
 
-function clanDeviceIds(clan) {
-  const ids = new Set();
-  for (const member of clan?.members ?? []) {
-    if (member?.deviceId) ids.add(member.deviceId);
-    for (const deviceId of member?.deviceIds ?? []) ids.add(deviceId);
-    const stats = clan?.memberStats?.[member?.userId];
-    if (stats?.deviceId) ids.add(stats.deviceId);
-    for (const deviceId of stats?.deviceIds ?? []) ids.add(deviceId);
+export function reservationCleanupEnabled(
+  event,
+  features = ADMIN_FEATURES,
+) {
+  return event?.useClanReservations === true
+    && features.reservationCleanupEmergencyDisabled !== true;
+}
+
+function addDeviceIds(ids, source) {
+  if (!source || typeof source !== "object") return;
+  if (typeof source.deviceId === "string" && source.deviceId) {
+    ids.add(source.deviceId);
   }
+  for (const deviceId of Array.isArray(source.deviceIds) ? source.deviceIds : []) {
+    if (typeof deviceId === "string" && deviceId) ids.add(deviceId);
+  }
+}
+
+export function knownDeviceIds(clan, ...sources) {
+  const ids = new Set();
+  addDeviceIds(ids, clan);
+  for (const member of clanMembers(clan)) {
+    addDeviceIds(ids, member);
+    const stats = clan?.memberStats?.[member?.userId];
+    addDeviceIds(ids, stats);
+  }
+  for (const stats of Object.values(clan?.memberStats ?? {})) addDeviceIds(ids, stats);
+  for (const source of sources.flat()) addDeviceIds(ids, source);
   return [...ids].filter(Boolean);
+}
+
+function knownMemberIds(clan, ...sources) {
+  const ids = new Set(clanMembers(clan).map(member => member.userId).filter(Boolean));
+  for (const source of [clan, ...sources.flat()]) {
+    for (const userId of Array.isArray(source?.memberIds) ? source.memberIds : []) {
+      if (typeof userId === "string" && userId) ids.add(userId);
+    }
+  }
+  return [...ids];
 }
 
 export async function disbandClan({
@@ -93,28 +128,62 @@ export async function disbandClan({
   clanId,
   message = "",
   now = new Date().toISOString(),
-  noticeType = "admin_disbanded",
+  noticeType = "kicked",
   releaseReservations = false,
 }) {
   if (!fb?.db || !clanId) throw new Error("Missing clan details.");
+  if (!releaseReservations) {
+    throw new Error("Clan cleanup is paused. Nothing was changed.");
+  }
 
   const clanRef = fb.doc(fb.db, COLLECTIONS.clans, clanId);
-  const directoryRef = fb.doc(fb.db, ...COLLECTIONS.clanDirectory);
+  const directoryShardRef = fb.doc(
+    fb.db,
+    COLLECTIONS.clanDirectoryCollection,
+    clanId,
+  );
+  const legacyDirectoryRef = fb.doc(fb.db, ...COLLECTIONS.clanDirectory);
   let result = null;
 
   await fb.runTransaction(fb.db, async transaction => {
     const clanSnapshot = await transaction.get(clanRef);
-    const directorySnapshot = await transaction.get(directoryRef);
+    const directoryShardSnapshot = await transaction.get(directoryShardRef);
+    const legacyDirectorySnapshot = await transaction.get(legacyDirectoryRef);
     if (!clanSnapshot.exists()) {
       throw new Error("That clan no longer exists.");
     }
 
     const clan = { id: clanId, ...clanSnapshot.data() };
-    const nameKey = releaseReservations ? await clanNameKey(clan.name) : "";
-    const tagKey = releaseReservations ? normalizeClanTag(clan.tag) : "";
-    const members = clan.members ?? [];
-    const memberIds = [...new Set(members.map(member => member?.userId).filter(Boolean))];
-    const deviceIds = releaseReservations ? clanDeviceIds(clan) : [];
+    const directoryShard = directoryShardSnapshot.exists()
+      ? directoryShardSnapshot.data()
+      : null;
+    const currentDirectory = legacyDirectorySnapshot.exists()
+      ? (legacyDirectorySnapshot.data().clans ?? [])
+      : [];
+    const legacyDirectoryEntry = currentDirectory.find(entry => entry?.id === clanId);
+    const memberIds = knownMemberIds(clan, directoryShard, legacyDirectoryEntry);
+    const membershipRefs = memberIds.map(userId =>
+      fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
+    const membershipSnapshots = await Promise.all(
+      membershipRefs.map(ref => transaction.get(ref)),
+    );
+    const membershipRecords = membershipSnapshots
+      .filter(snapshot => snapshot.exists())
+      .map(snapshot => snapshot.data());
+    const deviceIds = knownDeviceIds(
+      clan,
+      directoryShard,
+      legacyDirectoryEntry,
+      membershipRecords,
+    );
+    const nameKeys = new Set([
+      typeof clan.nameKey === "string" ? clan.nameKey : "",
+      await clanNameKey(clan.name),
+    ].filter(Boolean));
+    const tagKeys = new Set([
+      typeof clan.tagKey === "string" ? clan.tagKey : "",
+      normalizeClanTag(clan.tag),
+    ].filter(Boolean));
     const cleanMessage = String(message ?? "").trim().slice(0, 300);
 
     for (const userId of memberIds) {
@@ -128,34 +197,33 @@ export async function disbandClan({
           at: now,
         },
       );
-      if (releaseReservations) {
-        transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
-      }
+      transaction.delete(fb.doc(fb.db, COLLECTIONS.clanMemberships, userId));
     }
 
     for (const deviceId of deviceIds) {
       transaction.delete(fb.doc(fb.db, COLLECTIONS.clanDevices, deviceId));
     }
 
-    if (nameKey) {
+    for (const nameKey of nameKeys) {
       transaction.delete(fb.doc(fb.db, COLLECTIONS.clanNameKeys, nameKey));
     }
-    if (tagKey) {
+    for (const tagKey of tagKeys) {
       transaction.delete(fb.doc(fb.db, COLLECTIONS.clanTagKeys, tagKey));
     }
 
-    const currentDirectory = directorySnapshot.exists()
-      ? (directorySnapshot.data().clans ?? [])
-      : [];
-    transaction.set(directoryRef, {
-      clans: directoryWithoutClan(currentDirectory, clanId),
-    });
+    transaction.delete(directoryShardRef);
+    if (legacyDirectorySnapshot.exists()) {
+      transaction.set(legacyDirectoryRef, {
+        clans: directoryWithoutClan(currentDirectory, clanId),
+      }, { merge: true });
+    }
     transaction.delete(clanRef);
 
     result = {
       clanId,
       clanName: clan.name ?? "Unknown clan",
       notified: memberIds.length,
+      devicesReleased: deviceIds.length,
     };
   });
 
@@ -178,13 +246,16 @@ function closeDisbandDialog() {
   if (modal) modal.hidden = true;
   const message = document.getElementById("adminDisbandMessage");
   if (message) message.value = "";
+  if (previousFocus?.isConnected) previousFocus.focus();
+  previousFocus = null;
 }
 
 function openDisbandDialog(clan) {
-  if (!ADMIN_FEATURES.disbandEnabled) return;
+  if (!ADMIN_FEATURES.disbandEnabled || !reservationCleanupEnabled(adminEvent)) return;
+  previousFocus = document.activeElement;
   selectedClan = clan;
   text("adminDisbandClanName", `${clan.tag ? `[${clan.tag}] ` : ""}${clan.name}`);
-  text("adminDisbandWarning", disbandWarning(eventEndTime));
+  text("adminDisbandWarning", disbandWarning(adminEvent?.endTime, adminNow()));
   const modal = document.getElementById("adminDisbandModal");
   if (modal) modal.hidden = false;
   document.getElementById("adminDisbandMessage")?.focus();
@@ -198,12 +269,13 @@ function renderAdminClans() {
     ?.trim()
     .toLowerCase() ?? "";
   const duplicateIds = duplicateClanIds(adminClans);
+  const cleanupReady = reservationCleanupEnabled(adminEvent);
   const clans = adminClans
     .filter(clan => {
       if (!query) return true;
       return String(clan.name ?? "").toLowerCase().includes(query)
         || String(clan.tag ?? "").toLowerCase().includes(query)
-        || (clan.members ?? []).some(member =>
+        || clanMembers(clan).some(member =>
           String(member?.name ?? "").toLowerCase().includes(query));
     })
     .sort((a, b) => String(a.tag ?? "").localeCompare(String(b.tag ?? "")));
@@ -229,7 +301,8 @@ function renderAdminClans() {
     copy.appendChild(title);
 
     const meta = document.createElement("span");
-    meta.textContent = `${(clan.members ?? []).length} member${(clan.members ?? []).length === 1 ? "" : "s"} · ${clan.id}`;
+    const memberCount = clanMembers(clan).length;
+    meta.textContent = `${memberCount} member${memberCount === 1 ? "" : "s"} · ${clan.id}`;
     copy.appendChild(meta);
 
     if (duplicateIds.has(clan.id)) {
@@ -242,8 +315,9 @@ function renderAdminClans() {
     const button = document.createElement("button");
     button.className = "admin-danger";
     button.type = "button";
-    button.textContent = ADMIN_FEATURES.disbandEnabled ? "Disband" : "Locked";
-    button.disabled = !ADMIN_FEATURES.disbandEnabled;
+    const canDisband = ADMIN_FEATURES.disbandEnabled && cleanupReady;
+    button.textContent = canDisband ? "Disband" : "Locked";
+    button.disabled = !canDisband;
     button.addEventListener("click", () => openDisbandDialog(clan));
 
     row.append(copy, button);
@@ -257,7 +331,18 @@ export function setAdminClans(clans) {
 }
 
 export function setAdminEvent(event) {
-  eventEndTime = Number(event?.endTime) || 0;
+  adminEvent = event ?? null;
+  const note = document.getElementById("adminCleanupNote");
+  if (note) {
+    note.textContent = reservationCleanupEnabled(adminEvent)
+      ? "Every disband asks for confirmation and removes all reservation locks."
+      : "Disbanding is locked until reservation cleanup is enabled for the live event.";
+  }
+  renderAdminClans();
+}
+
+export function setAdminNowProvider(provider) {
+  if (typeof provider === "function") adminNow = provider;
 }
 
 export function showAdminUnavailable(message) {
@@ -321,7 +406,7 @@ export async function initClanAdmin({ app, db }) {
         clanId: selectedClan.id,
         message: document.getElementById("adminDisbandMessage")?.value,
         noticeType: ADMIN_FEATURES.noticeType,
-        releaseReservations: ADMIN_FEATURES.reservationCleanupEnabled,
+        releaseReservations: reservationCleanupEnabled(adminEvent),
       });
       closeDisbandDialog();
       text("adminAuthNote", `${result.clanName} was disbanded. ${result.notified} player${result.notified === 1 ? "" : "s"} will see the notice.`);
@@ -343,14 +428,20 @@ export async function initClanAdmin({ app, db }) {
       text("adminAuthNote", "Sign in with an approved Google account.");
     } else if (!isAdmin) {
       text("adminAuthNote", `${user.email} does not have admin access.`);
-    } else if (ADMIN_FEATURES.disbandEnabled) {
+    } else if (ADMIN_FEATURES.disbandEnabled && reservationCleanupEnabled(adminEvent)) {
       text("adminAuthNote", "Admin access is active. Every disband needs confirmation.");
     } else {
-      text("adminAuthNote", "Admin access is ready. Disbanding stays locked until the event ends.");
+      text("adminAuthNote", "Admin access is ready. Reservation cleanup is currently locked.");
     }
 
     setAdminVisible(isAdmin);
     if (!isAdmin) closeDisbandDialog();
     renderAdminClans();
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !document.getElementById("adminDisbandModal")?.hidden) {
+      closeDisbandDialog();
+    }
   });
 }

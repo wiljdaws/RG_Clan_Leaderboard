@@ -7,15 +7,17 @@ export const DEMO = {
   event: { name: "Clan Clash Cup", startTime: now - 7 * 864e5, endTime: now + 7 * 864e5 },
   clans: [
     { tag: "[KING]", name: "Kings of the Pitch", tagStyle: "<#00FFFF>",
-      eventBaseline: { u1: 5900, u2: 5100, u3: 4420, u4: 3980, u5: 2760 },
-      members: [
-        { userId: "u1", name: "JesusDied4U", role: "leader",   mmr: 6365, syncedAt: ago(2) },
-        { userId: "u2", name: "Xuuya",       role: "coleader", mmr: 5869, syncedAt: ago(1) },
-        { userId: "u3", name: "Pal",         role: "member",   mmr: 4890, syncedAt: ago(38) },
-        { userId: "u4", name: "Ryme",        role: "member",   mmr: 4245, syncedAt: ago(210) },
-        { userId: "u5", name: "GoatHerder",  role: "member",   mmr: 2985, syncedAt: ago(1440) },
-        { userId: "u6", name: "TurboLamb",   role: "member",   mmr: 2140, syncedAt: null },
-      ] },
+      members: {
+        u1: { name: "JesusDied4U", role: "leader",   mmr: 6365, syncedAt: ago(2), eventBaseline: 5900 },
+        u2: { name: "Xuuya",       role: "coleader", mmr: 5840, syncedAt: ago(8), eventBaseline: 5100 },
+        u3: { name: "Pal",         role: "member",   mmr: 4890, syncedAt: ago(38), eventBaseline: 4420 },
+        u4: { name: "Ryme",        role: "member",   mmr: 4245, syncedAt: ago(210), eventBaseline: 3980 },
+        u5: { name: "GoatHerder",  role: "member",   mmr: 2985, syncedAt: ago(1440), eventBaseline: 2760 },
+        u6: { name: "TurboLamb",   role: "member",   mmr: 2140, syncedAt: null },
+      },
+      memberStats: {
+        u2: { mmr: 5869, syncedAt: ago(1) },
+      } },
     { tag: "[SBA]", name: "Squad Break Alpha", tagStyle: "<#A855F7>",
       eventBaseline: { s1: 7795, s2: 6510, s3: 3781, s4: 5364 },
       members: [

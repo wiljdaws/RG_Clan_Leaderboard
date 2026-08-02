@@ -1,31 +1,60 @@
 // Boot + Firestore wiring. Same access pattern as ATLAS: SDK ESM from
 // gstatic, unauthenticated reads, onSnapshot for both events/current and clans.
 import { FIREBASE_CONFIG, COLLECTIONS, SDK } from "./config.js";
-import { buildStandings, currentEventId, eventPhase } from "./scoring.js";
+import {
+  buildStandings,
+  buildWaitingRoster,
+  currentEventId,
+  eventPhase,
+} from "./scoring.js";
 import { renderHeaderStats, renderPodium, renderStandings, renderPlayers,
-         renderPhase, setEventTitle, setSyncLine, showDemoBanner, markSynced,
+         renderPhase, setEventTitle, setSyncLine, markSynced,
          renderPerms, setOpenClan, onPinToggle, onCompareToggle,
          onCompareScreenshot,
          pushTickerEvents, renderCompare, closeCompare,
-         showEventEndReveal } from "./render.js";
+         showEventEndReveal, renderDataState, renderWaitingRoster,
+         renderArchive, onArchiveSelect, onArchiveReplay, onArchiveClear,
+         setNowProvider } from "./render.js";
 import { DEMO } from "./demo-data.js";
 import { recordSnapshot, clanMomentum, projectScore, detectRankChanges,
-         detectBigGains, historySpanMs } from "./history.js";
+         detectBigGains, historySpanMs, listEventArchives, eventReplay,
+         clearEventHistory, historyError } from "./history.js";
 import {
   initClanAdmin,
   setAdminClans,
   setAdminEvent,
+  setAdminNowProvider,
   showAdminUnavailable,
 } from "./admin.js";
+import {
+  createServerClock,
+  createSnapshotCoordinator,
+  createVisibilityController,
+  deriveDataMode,
+  syncServerClock,
+} from "./live-state.js";
 
 let eventConfig = null;
 let lastRawClans = [];
+let online = navigator.onLine;
+let demoMode = false;
+let liveState = {
+  hasCommitted: false,
+  reconnecting: false,
+  event: null,
+  online,
+};
+const serverClock = createServerClock();
+setNowProvider(serverClock.now);
+setAdminNowProvider(serverClock.now);
 
 // UI controls state. Only viewMode / sortMode / filterQuery / pinnedIds
 // affect what renders — everything else stays derived from Firestore.
-let viewMode = "clans";       // "clans" | "players"
+let viewMode = "clans";       // "clans" | "players" | "archive"
 let sortMode = "score";       // "score" | "members" | "alpha"
 let filterQuery = "";
+let selectedArchiveId = null;
+let archiveReplayIndex = -1;
 const PINNED_STORAGE_KEY = "clashcup:pinnedClans";
 const loadPinned = () => {
   try { return new Set(JSON.parse(localStorage.getItem(PINNED_STORAGE_KEY) || "[]")); }
@@ -53,6 +82,7 @@ function parseEventDoc(d) {
     startTime: millisOf(d.startTime),
     endTime: millisOf(d.endTime),
     maxMembers: typeof d.maxMembers === "number" ? d.maxMembers : null,
+    useClanReservations: d.useClanReservations === true,
     perms: d.perms ?? null,
   };
 }
@@ -86,22 +116,70 @@ function buildPlayerBoard(standings) {
 }
 
 function renderAll({ recordHistory = false } = {}) {
+  let historyChanged = false;
+  const clansBoard = document.getElementById("clansBoard");
+  const playersBoard = document.getElementById("playersBoard");
+  const archiveBoard = document.getElementById("archiveBoard");
+  const filterInput = document.getElementById("filterInput");
+  const sortSelect = document.getElementById("sortSelect");
+  const viewingArchive = viewMode === "archive";
+
+  if (viewingArchive) {
+    clansBoard.style.display = "none";
+    playersBoard.style.display = "none";
+    archiveBoard.style.display = "";
+    filterInput.disabled = true;
+    sortSelect.disabled = true;
+  } else {
+    archiveBoard.style.display = "none";
+    filterInput.disabled = false;
+    sortSelect.disabled = false;
+  }
+
+  if (!eventConfig) {
+    if (viewingArchive) {
+      renderArchivePanel();
+      return historyChanged;
+    }
+    renderHeaderStats([], 0);
+    renderPodium([]);
+    renderPerms(null);
+    renderWaitingRoster([]);
+    if (viewMode === "clans") {
+      renderStandings([], {
+        emptyReason: liveState.eventError || liveState.clansError ? "error" : "event",
+      });
+      clansBoard.style.display = "";
+      playersBoard.style.display = "none";
+    } else {
+      renderPlayers([], {
+        emptyReason: liveState.eventError || liveState.clansError ? "error" : "event",
+      });
+      clansBoard.style.display = "none";
+      playersBoard.style.display = "";
+    }
+    return historyChanged;
+  }
+
   const standings = buildStandings(lastRawClans, eventConfig);
   standings.forEach((c, i) => { c.rank = i + 1; });
   // History records happen once per real snapshot (not on UI-only re-renders
   // like tab switch or sort change), so momentum reflects data velocity
   // rather than click rate.
-  if (recordHistory) recordSnapshot(standings);
+  if (recordHistory) {
+    historyChanged = recordSnapshot(eventConfig, standings, serverClock.now());
+  }
 
   const evId = currentEventId(eventConfig);
-  const waiting = evId ? lastRawClans.filter(c => c.eventId !== evId).length : 0;
+  const waitingRoster = buildWaitingRoster(lastRawClans, eventConfig);
+  const waiting = waitingRoster.reduce((sum, group) => sum + group.members.length, 0);
   const allPlayers = buildPlayerBoard(standings);
   const mvpUserId = allPlayers[0]?.userId ?? null;
 
   // Build per-clan momentum + projection derived from history.
   const momentumById = new Map();
   standings.forEach(c => {
-    const m = clanMomentum(c.id);
+    const m = clanMomentum(evId, c.id);
     momentumById.set(c.id, m);
   });
   // Project a rolling 3-hour horizon from the viewer's current time, clamped
@@ -110,10 +188,12 @@ function renderAll({ recordHistory = false } = {}) {
   // event-end clock the user can't easily reason about.
   const PROJECTION_HORIZON_MS = 3 * 60 * 60_000;
   const projectionTarget = eventConfig?.endTime
-    ? Math.min(Date.now() + PROJECTION_HORIZON_MS, eventConfig.endTime)
+    ? Math.min(serverClock.now() + PROJECTION_HORIZON_MS, eventConfig.endTime)
     : null;
   const winnerProjection = projectionTarget && eventConfig?.startTime && standings[0]
-    ? projectScore(standings[0].id, projectionTarget, { eventStartTime: eventConfig.startTime })
+    ? projectScore(evId, standings[0].id, projectionTarget, {
+      eventStartTime: eventConfig.startTime,
+    })
     : null;
 
   const ctx = {
@@ -125,16 +205,17 @@ function renderAll({ recordHistory = false } = {}) {
     winnerProjectionTarget: projectionTarget,
     winnerTag: standings[0]?.tag ?? null,
     endTime: eventConfig?.endTime ?? null,
-    historyReady: historySpanMs() >= 60_000,
+    historyReady: historySpanMs(evId) >= 60_000,
     compareSelection,
   };
 
   renderHeaderStats(standings, waiting);
   renderPodium(standings, ctx);
+  renderWaitingRoster(waitingRoster);
   renderPerms(eventConfig?.perms);
 
   // Fire the celebration once, exactly when phase transitions to ended.
-  const phase = eventPhase(eventConfig);
+  const phase = eventPhase(eventConfig, serverClock.now());
   if (lastPhase && lastPhase !== "ended" && phase === "ended" && standings.length) {
     const evId = currentEventId(eventConfig);
     if (localStorage.getItem(REVEAL_KEY) !== evId) {
@@ -144,8 +225,11 @@ function renderAll({ recordHistory = false } = {}) {
   }
   lastPhase = phase;
 
-  const clansBoard = document.getElementById("clansBoard");
-  const playersBoard = document.getElementById("playersBoard");
+  if (viewingArchive) {
+    renderArchivePanel();
+    return historyChanged;
+  }
+
   if (viewMode === "clans") {
     const list = applyControls(standings);
     renderStandings(list, { ...ctx, emptyReason: filterQuery ? "filter" : null });
@@ -159,23 +243,73 @@ function renderAll({ recordHistory = false } = {}) {
     renderPlayers(filtered, { ...ctx, emptyReason: q ? "filter" : null });
     clansBoard.style.display = "none"; playersBoard.style.display = "";
   }
+  return historyChanged;
+}
+
+function renderArchivePanel() {
+  const archives = listEventArchives();
+  if (!selectedArchiveId || !archives.some(event => event.id === selectedArchiveId)) {
+    selectedArchiveId = archives[0]?.id ?? null;
+    archiveReplayIndex = -1;
+  }
+  const replay = selectedArchiveId
+    ? eventReplay(selectedArchiveId, archiveReplayIndex)
+    : null;
+  renderArchive(archives, replay, {
+    error: historyError(),
+    offline: !online,
+  });
 }
 
 function loadDemo(reason) {
   console.warn("[ClashCup] falling back to demo data:", reason);
-  showDemoBanner();
+  demoMode = true;
+  renderDataState("demo", "Sample standings are shown because live Firebase could not load.");
   setSyncLine("Demo mode — sample data mirroring <code>clans/{clanId}</code>.");
-  eventConfig = { ...DEMO.event, maxMembers: 5, perms: null };
+  eventConfig = {
+    ...DEMO.event,
+    maxMembers: 5,
+    perms: null,
+    useClanReservations: false,
+  };
   const evId = currentEventId(eventConfig);
-  DEMO.clans.forEach((c, i) => {
-    c.eventId = evId;
-    c.id = c.id ?? `demo-${i}`;
-  });
+  lastRawClans = DEMO.clans.map((clan, index) => ({
+    ...clan,
+    eventId: evId,
+    id: clan.id ?? `demo-${index}`,
+  }));
+  liveState = { ...liveState, event: eventConfig, hasCommitted: true, demo: true };
+  setAdminEvent(eventConfig);
+  setAdminClans(lastRawClans);
   setEventTitle(eventConfig.name);
   renderPhase(eventConfig);
-  lastRawClans = DEMO.clans;
-  renderAll({ recordHistory: true });
+  renderAll();
   maybeApplyInitialHash();
+}
+
+function stateDetail(mode, state) {
+  if (mode === "loading") return "Waiting for the first event and clan snapshots.";
+  if (mode === "live") return "Event and clan snapshots are connected.";
+  if (!online) return "Offline — showing the latest available data.";
+  if (state.reconnecting) return "Reconnecting after the page became visible.";
+  if (state.eventError) return "The event feed is unavailable. Latest data stays on screen.";
+  if (state.clansError) return "The clan feed is unavailable. Latest data stays on screen.";
+  if (!state.event) return "The live event document is missing. Scores are paused.";
+  if (state.eventFromCache || state.clansFromCache) {
+    return "Showing cached data while Firestore confirms the live snapshot.";
+  }
+  return "";
+}
+
+function updateDataState(state) {
+  liveState = { ...state, online, demo: demoMode };
+  const mode = deriveDataMode(liveState);
+  renderDataState(mode, stateDetail(mode, liveState));
+  if (mode === "live") {
+    setSyncLine(`Live from Firestore <code>rgleaderboard</code>`);
+  } else if (mode === "degraded") {
+    setSyncLine("Live sync is limited. Saved data stays visible while the page retries.");
+  }
 }
 
 async function boot() {
@@ -195,38 +329,105 @@ async function boot() {
     return loadDemo("SDK load failed: " + e.message);
   }
 
-  try {
-    fb.onSnapshot(fb.doc(fb.db, ...COLLECTIONS.eventDoc), snap => {
-      if (!snap.exists()) {
-        eventConfig = null;
-        setAdminEvent(null);
-        renderPhase(null);
-        return;
-      }
-      eventConfig = parseEventDoc(snap.data());
-      setAdminEvent(eventConfig);
-      setEventTitle(eventConfig.name);
+  syncServerClock(fetch, location.href, serverClock)
+    .then(() => {
       renderPhase(eventConfig);
-      renderAll();
-    }, err => loadDemo("event listener: " + err.message));
+      if (liveState.hasCommitted) renderAll();
+    })
+    .catch(() => { /* device time is the safe fallback */ });
 
-    fb.onSnapshot(fb.collection(fb.db, COLLECTIONS.clans), snap => {
-      lastRawClans = [];
-      snap.forEach(ds => lastRawClans.push({ id: ds.id, ...ds.data() }));
+  const coordinator = createSnapshotCoordinator({
+    onCommit: ({ event, clans }, meta) => {
+      eventConfig = event;
+      lastRawClans = clans;
+      setAdminEvent(eventConfig);
       setAdminClans(lastRawClans);
-      renderAll({ recordHistory: true });
-      publishLiveEvents();
-      markSynced();
-      setSyncLine(`Live from Firestore <code>rgleaderboard</code>`);
+      setEventTitle(eventConfig?.name ?? "Clan Clash Cup");
+      renderPhase(eventConfig);
+      const includesClanSnapshot = (meta.kind === "cycle" && !meta.clansError)
+        || meta.kind === "clans";
+      const historyChanged = renderAll({
+        recordHistory: includesClanSnapshot && !!eventConfig,
+      });
+      if (includesClanSnapshot && eventConfig && historyChanged) publishLiveEvents();
+      if (includesClanSnapshot) markSynced(serverClock.now());
       maybeApplyInitialHash();
-    }, err => loadDemo("clans listener: " + err.message));
-  } catch (e) { loadDemo(e.message); }
+    },
+    onStatus: updateDataState,
+  });
+
+  let listenerGeneration = 0;
+  const subscribe = () => {
+    const generation = ++listenerGeneration;
+    const isCurrent = () => generation === listenerGeneration;
+    coordinator.beginCycle();
+    let stopEvent = () => {};
+    let stopClans = () => {};
+    try {
+      stopEvent = fb.onSnapshot(
+        fb.doc(fb.db, ...COLLECTIONS.eventDoc),
+        { includeMetadataChanges: true },
+        snapshot => {
+          if (!isCurrent()) return;
+          coordinator.receiveEvent(
+            snapshot.exists() ? parseEventDoc(snapshot.data()) : null,
+            { fromCache: snapshot.metadata.fromCache },
+          );
+        },
+        error => {
+          if (isCurrent()) coordinator.failEvent(error);
+        },
+      );
+      stopClans = fb.onSnapshot(
+        fb.collection(fb.db, COLLECTIONS.clans),
+        { includeMetadataChanges: true },
+        snapshot => {
+          if (!isCurrent()) return;
+          const clans = [];
+          snapshot.forEach(docSnapshot =>
+            clans.push({ id: docSnapshot.id, ...docSnapshot.data() }));
+          coordinator.receiveClans(clans, {
+            fromCache: snapshot.metadata.fromCache,
+          });
+        },
+        error => {
+          if (isCurrent()) coordinator.failClans(error);
+        },
+      );
+    } catch (error) {
+      coordinator.failEvent(error);
+      coordinator.failClans(error);
+    }
+    return () => {
+      if (isCurrent()) listenerGeneration += 1;
+      stopEvent();
+      stopClans();
+    };
+  };
+
+  createVisibilityController({
+    document,
+    subscribe,
+    onHidden: () => setSyncLine("Live listeners pause while this page is hidden."),
+  });
+
+  const handleNetwork = () => {
+    online = navigator.onLine;
+    updateDataState(coordinator.getState());
+    if (viewMode === "archive") renderArchivePanel();
+  };
+  window.addEventListener("online", handleNetwork);
+  window.addEventListener("offline", handleNetwork);
 }
 
 // Combine history-derived events into the ticker after each snapshot.
 // Deduped by keeping tickerFeed capped and letting the module drop old rows.
 function publishLiveEvents() {
-  const events = [...detectRankChanges(), ...detectBigGains()];
+  const eventId = currentEventId(eventConfig);
+  const events = [
+    ...detectRankChanges(eventId),
+    ...detectBigGains(eventId),
+  ];
   if (events.length) {
     pushTickerEvents(events);
     maybeNotify(events);
@@ -397,17 +598,56 @@ function screenshotCompare(a, b) {
   });
 }
 
+function trapOpenDialogFocus(event) {
+  if (event.key !== "Tab") return;
+  const dialog = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+    .find(candidate => !candidate.hidden);
+  if (!dialog) return;
+  const focusable = [...dialog.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )].filter(element => !element.hidden);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!dialog.contains(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function wireControls() {
-  document.querySelectorAll(".tab").forEach(tab => {
+  const tabs = [...document.querySelectorAll(".tab")];
+  tabs.forEach(tab => {
     tab.addEventListener("click", () => {
       if (tab.classList.contains("active")) return;
-      document.querySelectorAll(".tab").forEach(t => {
+      tabs.forEach(t => {
         const on = t === tab;
         t.classList.toggle("active", on);
         t.setAttribute("aria-selected", on);
+        t.tabIndex = on ? 0 : -1;
       });
       viewMode = tab.dataset.tab;
       renderAll();
+    });
+    tab.addEventListener("keydown", event => {
+      const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+      if (!keys.includes(event.key)) return;
+      event.preventDefault();
+      const current = tabs.indexOf(tab);
+      const next = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length)
+            % tabs.length;
+      tabs[next].focus();
+      tabs[next].click();
     });
   });
   document.getElementById("filterInput").addEventListener("input", e => {
@@ -429,6 +669,7 @@ function wireControls() {
     updateCompareUI();
   });
   document.addEventListener("keydown", e => {
+    trapOpenDialogFocus(e);
     // "F" (not in text inputs) toggles streamer mode.
     if ((e.key === "f" || e.key === "F") && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName)) {
       toggleStreamMode();
@@ -457,6 +698,23 @@ onPinToggle(id => {
 });
 
 onCompareScreenshot(screenshotCompare);
+onArchiveSelect(eventId => {
+  selectedArchiveId = eventId;
+  archiveReplayIndex = -1;
+  renderArchivePanel();
+});
+onArchiveReplay(index => {
+  archiveReplayIndex = index;
+  renderArchivePanel();
+});
+onArchiveClear(eventId => {
+  if (!window.confirm("Clear local history for this event?")) return;
+  clearEventHistory(eventId);
+  selectedArchiveId = null;
+  archiveReplayIndex = -1;
+  renderArchivePanel();
+  toast("Local history cleared");
+});
 
 // Compare picker: click once, banner appears asking for a second clan.
 // Click a second clan → open the modal. Click the same clan twice cancels.

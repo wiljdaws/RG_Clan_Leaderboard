@@ -11,6 +11,7 @@ export const FIREBASE_CONFIG = {
 
 export const COLLECTIONS = {
   clans: "clans",
+  clanDirectoryCollection: "clans_directory",
   clanDirectory: ["clans_directory", "index"],
   clanNotices: "clan_notices",
   clanNameKeys: "clan_name_keys",
@@ -29,8 +30,9 @@ export const ADMIN_FEATURES = {
   disbandEnabled: true,
   // Older ATLAS versions already know how to show this notice type.
   noticeType: "kicked",
-  // Reservation records do not exist in production yet.
-  reservationCleanupEnabled: false,
+  // Live events/current.useClanReservations is the rollout switch. Set this
+  // true only to stop destructive cleanup during an emergency.
+  reservationCleanupEmergencyDisabled: false,
 };
 
 export const SDK = "10.12.2";
