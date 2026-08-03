@@ -451,8 +451,8 @@ export function renderCompare(a, b, ctx = {}) {
       <div class="cmp-side-head">
         ${crest(c, "crest")}
         <div>
-          <div class="cname">${esc(c.tag)}</div>
-          <div class="cmeta">${esc(c.name)} · ${rosterLabel(c.members.length, ctx.maxMembers)}</div>
+          <div class="cname">${esc(c.name)}</div>
+          <div class="cmeta">${rosterLabel(c.members.length, ctx.maxMembers)}</div>
         </div>
       </div>
       <div class="cmp-score ${cls}">${fmt(c.score)}</div>

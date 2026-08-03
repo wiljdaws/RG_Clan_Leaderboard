@@ -305,13 +305,15 @@
     display:flex;flex-direction:column;gap:12px;
   }
   .cmp-side-head{display:flex;align-items:center;gap:14px}
-  .cmp-side-head .cname{font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.02em}
+  .cmp-side-head>div:last-child{min-width:0}
+  .cmp-side-head .cname{font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.02em;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmp-side-head .cmeta{color:var(--ink-dim);font-size:12px;font-weight:600}
   .cmp-score{font-family:var(--display);font-weight:700;font-size:34px;
     font-variant-numeric:tabular-nums;color:var(--gain)}
   .cmp-score.neg{color:var(--loss)} .cmp-score.zero{color:var(--ink-dim)}
   .cmp-gap{
-    align-self:center;font-family:var(--display);font-weight:700;
+    align-self:start;margin-top:84px;font-family:var(--display);font-weight:700;
     font-size:28px;color:var(--gold);text-align:center;
     text-shadow:0 0 16px rgba(255,210,74,.5);
   }
@@ -319,16 +321,18 @@
     color:var(--ink-dim);font-weight:600;margin-top:2px}
   .cmp-contribs{list-style:none;display:flex;flex-direction:column;gap:6px}
   .cmp-contribs li{
-    display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+    display:grid;grid-template-columns:minmax(0,1fr) 7ch;gap:10px;align-items:center;
     padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.02);
   }
-  .cmp-contribs .n{font-family:var(--display);font-weight:600;font-size:13px}
-  .cmp-contribs .d{font-family:var(--display);font-weight:700;font-variant-numeric:tabular-nums;color:var(--gain)}
+  .cmp-contribs .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:var(--display);font-weight:600;font-size:13px}
+  .cmp-contribs .d{inline-size:7ch;text-align:left;justify-self:end;
+    font-family:var(--display);font-weight:700;font-variant-numeric:tabular-nums;color:var(--gain)}
   .cmp-contribs .d.neg{color:var(--loss)} .cmp-contribs .d.none{color:var(--ink-dim)}
 
   @media (max-width:680px){
     .cmp-grid{grid-template-columns:1fr;gap:10px}
-    .cmp-gap{padding:6px 0}
+    .cmp-gap{align-self:center;margin-top:0;padding:6px 0}
   }
   .tabs{
     display:inline-flex;border:1px solid var(--line);border-radius:999px;
