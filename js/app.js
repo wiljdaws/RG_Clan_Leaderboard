@@ -404,13 +404,12 @@ async function boot() {
     let firstDelivered = false;
     const unsub = fb.onSnapshot(
       target,
-      { includeMetadataChanges: true },
       (snap) => {
         if (!firstDelivered) {
           firstDelivered = true;
           budget.charge(label, Math.max(1, snap.size || 1));
         } else {
-          const changes = snap.docChanges({ includeMetadataChanges: false });
+          const changes = snap.docChanges();
           budget.charge(label, Math.max(1, changes.length));
         }
         try { next?.(snap); } catch (err) {
