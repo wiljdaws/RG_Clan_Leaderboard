@@ -33,6 +33,8 @@ import {
   deriveDataMode,
   syncServerClock,
 } from "./live-state.js";
+import { createReadBudget } from "./read-budget.js";
+import { createReadTelemetryUploader } from "./read-telemetry.js";
 
 let eventConfig = null;
 let lastRawClans = [];
@@ -312,21 +314,147 @@ function updateDataState(state) {
   }
 }
 
+// Track admin state so telemetry only uploads while an admin is signed in
+// (matches admin_read_stats rules — non-admin writes would fail silently and
+// spam the console). Populated by initClanAdmin's onAdminChange callback.
+let isAdminSession = false;
+// Public handle for the read-budget instance so ops can inspect counters
+// live from DevTools without threading through module exports. Same shape
+// as the player-leaderboard's __rgReadBudget global.
+let readBudget = null;
+
 async function boot() {
   let fb;
+  let setDocFn = null;
   try {
     const { initializeApp } = await import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-app.js`);
-    const { getFirestore, doc, collection, onSnapshot } =
+    const firestoreSdk =
       await import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-firestore.js`);
+    const { getFirestore, doc, collection, onSnapshot, getDocs, setDoc } = firestoreSdk;
     const app = initializeApp(FIREBASE_CONFIG);
-    fb = { db: getFirestore(app), doc, collection, onSnapshot };
-    initClanAdmin({ app, db: fb.db }).catch(error => {
+    setDocFn = setDoc;
+    fb = { db: getFirestore(app), doc, collection, onSnapshot, getDocs, setDoc };
+    initClanAdmin({
+      app,
+      db: fb.db,
+      onAdminChange: (nextIsAdmin) => {
+        isAdminSession = nextIsAdmin;
+        // Delegates to the telemetry uploader created below. Guarded because
+        // the auth observer can fire before the uploader is instantiated on
+        // slow SDK loads.
+        if (nextIsAdmin) readTelemetry?.start?.();
+        else readTelemetry?.stop?.();
+      },
+    }).catch(error => {
       console.error("[ClashCup] admin login failed:", error);
       showAdminUnavailable("Admin login could not load.");
     });
   } catch (e) {
     showAdminUnavailable("Admin login could not load.");
     return loadDemo("SDK load failed: " + e.message);
+  }
+
+  // Read budget: guards runtime Firestore reads by counting them into a
+  // rolling window and (on hard-cap trip) tearing down every live listener.
+  // Ported verbatim from rg_player_leaderboard so the two sites share the
+  // same telemetry shape. Defaults: soft 500, hard 2000, 1h window.
+  //   ?readBudget=off → count but don't enforce.
+  const readBudgetParam = (() => {
+    try { return new URL(window.location.href).searchParams.get("readBudget"); }
+    catch { return null; }
+  })();
+  const enforcementDisabled = readBudgetParam === "off";
+  const budget = createReadBudget({});
+  readBudget = budget;
+  try { globalThis.__rgClanReadBudget = budget; } catch {}
+
+  const activeUnsubscribes = new Set();
+  let blocked = budget.isTripped() && !enforcementDisabled;
+  budget.onTrip((snap) => {
+    if (enforcementDisabled) return;
+    blocked = true;
+    for (const off of Array.from(activeUnsubscribes)) {
+      activeUnsubscribes.delete(off);
+      try { off(); } catch {}
+    }
+    try {
+      document.dispatchEvent(
+        new CustomEvent("clashcup:read-budget-tripped", { detail: snap }),
+      );
+    } catch {}
+    console.warn("[ClashCup] read budget tripped — live listeners torn down.", snap);
+  });
+
+  // Charge helpers. Every gateway read on the site funnels through these so
+  // per-label counts stay accurate. First onSnapshot payload charges
+  // snapshot.size; subsequent charges use docChanges().length so tab-focus
+  // re-hydrations don't inflate the per-listener cost.
+  async function chargedGetDocs(target, label) {
+    const snapshot = await fb.getDocs(target);
+    budget.charge(label, Math.max(1, snapshot.size || 1));
+    return snapshot;
+  }
+
+  function chargedOnSnapshot(target, label, next, error) {
+    if (blocked) {
+      const err = new Error("Read cap tripped — updates paused for 15 min.");
+      try { error?.(err); } catch {}
+      return () => {};
+    }
+    let firstDelivered = false;
+    const unsub = fb.onSnapshot(
+      target,
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (!firstDelivered) {
+          firstDelivered = true;
+          budget.charge(label, Math.max(1, snap.size || 1));
+        } else {
+          const changes = snap.docChanges({ includeMetadataChanges: false });
+          budget.charge(label, Math.max(1, changes.length));
+        }
+        try { next?.(snap); } catch (err) {
+          console.error("[ClashCup] onSnapshot handler threw", err);
+        }
+      },
+      (err) => { try { error?.(err); } catch {} },
+    );
+    const wrapped = () => {
+      activeUnsubscribes.delete(wrapped);
+      try { unsub(); } catch {}
+    };
+    activeUnsubscribes.add(wrapped);
+    return wrapped;
+  }
+
+  // Cross-session telemetry uploader. Writes admin_read_stats/{docKey} while
+  // an admin is signed in so we can attribute daily reads back to the labels
+  // above. Non-admin sessions never attempt writes — the rules would reject
+  // them and the client would log noise. `?telemetry=off` opts out even for
+  // admins, useful when debugging locally against prod.
+  const telemetryDisabled = (() => {
+    try { return new URL(window.location.href).searchParams.get("telemetry") === "off"; }
+    catch { return false; }
+  })();
+  const gateway = {
+    // Merge-write so periodic polls keep updating the same doc without
+    // re-creating it. Rules restrict this collection to admin writers.
+    setReadStat: (docKey, payload) =>
+      setDocFn(fb.doc(fb.db, "admin_read_stats", docKey), payload, { merge: true }),
+  };
+  var readTelemetry = telemetryDisabled
+    ? { start() {}, stop() {}, upload: async () => {} }
+    : createReadTelemetryUploader({
+        gateway,
+        budget,
+        isAdmin: () => isAdminSession,
+      });
+  if (telemetryDisabled) {
+    console.info("[ClashCup] read telemetry disabled via ?telemetry=off.");
+  } else {
+    // If an admin never signs in, no writes happen. Log once at boot so the
+    // absence of admin_read_stats docs isn't mistaken for a broken uploader.
+    console.info("[ClashCup] read telemetry armed — uploads start on admin sign-in.");
   }
 
   syncServerClock(fetch, location.href, serverClock)
@@ -364,9 +492,9 @@ async function boot() {
     let stopEvent = () => {};
     let stopClans = () => {};
     try {
-      stopEvent = fb.onSnapshot(
+      stopEvent = chargedOnSnapshot(
         fb.doc(fb.db, ...COLLECTIONS.eventDoc),
-        { includeMetadataChanges: true },
+        "event",
         snapshot => {
           if (!isCurrent()) return;
           coordinator.receiveEvent(
@@ -378,9 +506,9 @@ async function boot() {
           if (isCurrent()) coordinator.failEvent(error);
         },
       );
-      stopClans = fb.onSnapshot(
+      stopClans = chargedOnSnapshot(
         fb.collection(fb.db, COLLECTIONS.clans),
-        { includeMetadataChanges: true },
+        "clans",
         snapshot => {
           if (!isCurrent()) return;
           const clans = [];

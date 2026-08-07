@@ -369,7 +369,7 @@ export function showAdminUnavailable(message) {
   document.getElementById("adminLoginBtn")?.setAttribute("disabled", "");
 }
 
-export async function initClanAdmin({ app, db }) {
+export async function initClanAdmin({ app, db, onAdminChange = null } = {}) {
   if (adminReady) return;
   adminReady = true;
 
@@ -457,6 +457,13 @@ export async function initClanAdmin({ app, db }) {
     setAdminVisible(isAdmin);
     if (!isAdmin) closeDisbandDialog();
     renderAdminClans();
+    // Notify subscribers (e.g. the read-telemetry uploader in app.js) so
+    // admin-gated background work can start/stop with the session. Wrapped
+    // in try/catch so a listener failure never breaks the auth flow.
+    if (typeof onAdminChange === "function") {
+      try { onAdminChange(isAdmin); }
+      catch (err) { console.error("[ClashCup] onAdminChange threw", err); }
+    }
   });
 
   document.addEventListener("keydown", event => {
